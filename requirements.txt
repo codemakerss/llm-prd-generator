@@ -1,0 +1,12 @@
+markitdown[all]
+openai
+pydantic
+python-dotenv
+pyyaml
+rich
+typer
+pytest
+python-docx
+python-pptx
+openpyxl
+reportlab

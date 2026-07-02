@@ -1,0 +1,4 @@
+interface:
+  display_name: "LLM Wiki Generator"
+  short_description: "Archive and answer from an LLM Wiki vault"
+  default_prompt: "Use $llm-wiki-generator to archive knowledge into a wiki and answer from the stable knowledge base."

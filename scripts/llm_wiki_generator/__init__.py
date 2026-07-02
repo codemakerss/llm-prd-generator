@@ -1,0 +1,2 @@
+"""Standalone LLM Wiki Generator."""
+
