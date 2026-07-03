@@ -29,6 +29,7 @@ The goal is building a knowledge base that can keep evolving without becoming op
 
 - [Docs Navigation](#docs-navigation)
 - [Workflow](#workflow)
+- [First-Time Path](#first-time-path)
 - [Quick Start](#quick-start)
 - [Example Commands](#example-commands)
 - [Vault Structure](#vault-structure)
@@ -66,6 +67,19 @@ flowchart TD
     O --> P["index"]
     P --> Q["answer"]
 ```
+
+## First-Time Path
+
+For a first-time user, the shortest useful path is:
+
+1. install the skill or Python dependencies
+2. run `bootstrap-status`
+3. run `bootstrap-init` if the workspace is not initialized
+4. provide the first source document
+5. review proposed updates with `show-updates`
+6. apply approved updates, build the index, and start querying
+
+If you already know the desired vault location, you can still configure `.env` first and call `init` directly.
 
 ## Properties
 

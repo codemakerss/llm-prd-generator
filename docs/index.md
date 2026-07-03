@@ -16,6 +16,13 @@ This folder contains the project guides for different audiences and languages.
 - [English Usage Guide](README.en-usage.md)
   - Best for: English-speaking users who want operational guidance
 
+## Which Page Should I Read?
+
+- If you want the shortest project overview, start with [Project README](../README.md).
+- If you prefer Chinese and want a quick landing-page style introduction, start with [Chinese Overview](README.zh-home.md).
+- If you want detailed Chinese step-by-step usage instructions, read [Chinese Usage Guide](README.zh-usage.md).
+- If you want detailed English operational guidance, read [English Usage Guide](README.en-usage.md).
+
 ## Recommended Reading Path
 
 ### If you are new here

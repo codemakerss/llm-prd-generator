@@ -4,7 +4,7 @@
 
 LLM Wiki Generator is friendly to any AI agent, any team workflow, and standalone CLI usage. It can be used as a skill or run directly as a Python CLI. Its goal is not just to “chat with files,” but to convert incoming material into structured wiki knowledge first, then retrieve and answer from that knowledge base in a controlled way.
 
-This draft is written as an operational guide for people who want to ingest files, preview archive updates, write wiki pages, and query the resulting knowledge base.
+This guide is written for people who want to ingest files, preview archive updates, write wiki pages, and query the resulting knowledge base.
 
 ## 1. What It Does
 
