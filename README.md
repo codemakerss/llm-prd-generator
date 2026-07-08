@@ -2,8 +2,8 @@
 
 An LLM-first document ingestion and retrieval workflow for building a structured, local, Obsidian-compatible LLM Wiki.
 
-LLM Wiki Generator turns raw source files into traceable wiki knowledge through a direct pipeline: `archive -> answer`.
-For audit-heavy workflows, you can still inspect proposed updates with `show-updates` before writing.
+LLM Wiki Generator turns raw source files into traceable wiki knowledge through a host-model pipeline: `convert -> host LLM -> apply-preview -> search -> host LLM answer`.
+When installed as a skill, Claude Code, Codex, or OpenCode uses its own model to understand documents, generate archive content, and answer questions. The Python CLI only handles deterministic operations: conversion, validation, import, indexing, and retrieval.
 
 ## Why This Exists
 
@@ -17,9 +17,10 @@ This project takes a structured path.
 Instead of treating source files as a chat substrate, it treats them as inputs to an LLM-backed knowledge compiler:
 
 1. convert source material into normalized text
-2. use an LLM to extract structured wiki updates
-3. write knowledge directly into a vault
-4. rebuild the retrieval index for immediate recall
+2. let the host LLM extract structured archive content
+3. let the CLI validate and import that content into a vault
+4. let the CLI build a retrieval index
+5. let the host LLM answer from retrieved wiki knowledge
 
 The goal is not just answering questions.
 The goal is building a knowledge base that can keep evolving and remain searchable.
@@ -58,13 +59,14 @@ flowchart TD
     B -- "Yes" --> J["Provide source document"]
     I --> J
 
-    J --> K["archive"]
-    K --> L["LLM extracts structured updates"]
-    L --> M["Write raw source and wiki pages"]
+    J --> K["convert --as-json"]
+    K --> L["Host LLM generates ArchivePreview JSON"]
+    L --> M["apply-preview validates and imports"]
     M --> P["index"]
-    P --> Q["answer"]
+    P --> Q["search --as-json"]
+    Q --> S["Host LLM answers from retrieved docs"]
 
-    J -. "Optional audit path" .-> R["show-updates"]
+    J -. "Standalone API path" .-> R["archive"]
 ```
 
 ## First-Time Path
@@ -75,24 +77,43 @@ For a first-time user, the shortest useful path is:
 2. run `bootstrap-status`
 3. run `bootstrap-init` if the workspace is not initialized
 4. provide the first source document
-5. run `archive` to let the LLM extract and write knowledge directly
-6. start querying the indexed wiki
+5. run `convert --as-json`
+6. let Claude Code, Codex, or OpenCode generate `ArchivePreview` JSON
+7. run `apply-preview` to import and index the generated archive content
+8. query with `search --as-json`, then let the host LLM answer from retrieved docs
 
 If you already know the desired vault location, you can still configure `.env` first and call `init` directly.
-Archive, preview, and apply require a configured OpenAI-compatible LLM; the no-model fallback is only used for answer extraction.
+Host-model skill usage does not require `.env` model settings such as `LLM_API_KEY`; `.env` is only needed for wiki paths. Standalone CLI archive mode can still use an OpenAI-compatible API configured in `.env`.
 
 ## Properties
 
 - Supports `PDF`, `DOCX`, `PPTX`, `XLSX`, and `TXT`
-- Uses an LLM-first direct archive flow
-- Requires LLM-backed extraction for document uploads
-- Rebuilds the retrieval index by default after direct archive
+- Uses Claude Code, Codex, or OpenCode as the default archive/answer model when installed as a skill
+- Provides deterministic CLI tools for conversion, preview application, indexing, and search
+- Rebuilds the retrieval index by default after `apply-preview` or standalone `archive`
 - Writes into an Obsidian-compatible vault layout
 - Keeps raw sources and structured knowledge separate
 - Builds a local SQLite retrieval index
 - Supports stable and draft knowledge scopes
 - Provides bootstrap-style initialization for first-time setup
 - Persists chosen vault paths into `.env`
+
+## Responsibility Split
+
+Host LLM responsibilities:
+
+- understand converted Markdown
+- generate `ArchivePreview` JSON for wiki pages
+- summarize and answer from retrieved wiki documents
+
+CLI responsibilities:
+
+- convert files to Markdown
+- validate and enforce archive rules
+- copy raw files into `10-raw/`
+- write wiki pages into `20-wiki/`
+- build the SQLite index
+- retrieve local knowledge with `search`
 
 ## Quick Start
 
@@ -152,22 +173,36 @@ Convert a file:
 python scripts/cli.py convert path/to/file.pdf
 ```
 
-Directly archive a document and rebuild the retrieval index:
+Host-model archive flow:
+
+```bash
+python scripts/cli.py convert path/to/file.docx --as-json
+```
+
+Then Claude Code, Codex, or OpenCode generates `ArchivePreview` JSON from the converted Markdown.
+
+Apply and index that generated archive content:
+
+```bash
+python scripts/cli.py apply-preview path/to/file.docx --preview-file /tmp/archive-preview.json
+```
+
+Host-model recall flow:
+
+```bash
+python scripts/cli.py search "What business constraints are currently known?" --scope stable-draft --as-json
+```
+
+Standalone API archive mode, optional:
 
 ```bash
 python scripts/cli.py archive path/to/file.docx --source-type team_history
 ```
 
-Optionally preview archive updates without writing:
+Standalone CLI answer mode, optional:
 
 ```bash
-python scripts/cli.py show-updates path/to/file.docx --source-type team_history
-```
-
-Write without rebuilding the index:
-
-```bash
-python scripts/cli.py archive path/to/file.docx --source-type team_history --no-index
+python scripts/cli.py answer "What business constraints are currently known?"
 ```
 
 Build the retrieval index:
@@ -176,13 +211,13 @@ Build the retrieval index:
 python scripts/cli.py index
 ```
 
-Query the wiki:
+Search the wiki deterministically:
 
 ```bash
-python scripts/cli.py answer "What business constraints are currently known?"
+python scripts/cli.py search "What design ideas were mentioned in team history?" --scope stable-draft --as-json
 ```
 
-Include draft knowledge:
+Standalone CLI answer with draft knowledge:
 
 ```bash
 python scripts/cli.py answer "What design ideas were mentioned in team history?" --scope stable-draft
@@ -235,11 +270,11 @@ This repository prefers explicit state transitions over opaque ingestion.
 
 Key design choices:
 
-- direct LLM-backed archive by default
+- host-model archive and answer by default when used as a skill
 - deterministic archive application
 - persistent raw source capture
 - local retrieval over archived markdown
-- required LLM usage for archive extraction, with extractive fallback reserved for answering
+- standalone OpenAI-compatible API mode remains available for CLI-only usage
 
 The result is closer to a small knowledge compiler than a chat wrapper around files.
 
@@ -257,7 +292,7 @@ The result is closer to a small knowledge compiler than a chat wrapper around fi
 - Rich
 - Pydantic
 - SQLite FTS
-- OpenAI-compatible API
+- host-model skill mode plus optional OpenAI-compatible API mode
 - document parsers for DOCX, PPTX, XLSX, and PDF
 
 ## Learn More

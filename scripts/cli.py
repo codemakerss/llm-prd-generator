@@ -10,12 +10,12 @@ from rich.panel import Panel
 from rich.table import Table
 
 from llm_wiki_generator.answer import answer_question
-from llm_wiki_generator.archive import ArchiveLLMRequiredError, apply_preview, archive_source
+from llm_wiki_generator.archive import ArchiveLLMRequiredError, apply_preview, archive_source, enforce_rules
 from llm_wiki_generator.bootstrap import initialize_wiki_location, inspect_bootstrap
 from llm_wiki_generator.config import load_settings
-from llm_wiki_generator.indexer import build_index
+from llm_wiki_generator.indexer import build_index, search_index
 from llm_wiki_generator.markdown import convert_to_markdown
-from llm_wiki_generator.models import Scope, SourceType
+from llm_wiki_generator.models import ArchivePreview, Scope, SourceType
 from llm_wiki_generator.vault import init_vault
 
 
@@ -87,8 +87,17 @@ def bootstrap_init(wiki_root: Path) -> None:
 
 
 @app.command()
-def convert(source: Path, output: Optional[Path] = None) -> None:
+def convert(source: Path, output: Optional[Path] = None, as_json: bool = False) -> None:
     document = convert_to_markdown(source)
+    if as_json:
+        payload = {
+            "source_path": str(document.source_path),
+            "title": document.title,
+            "extension": document.extension,
+            "markdown": document.markdown,
+        }
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+        return
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(document.markdown, encoding="utf-8")
@@ -125,6 +134,15 @@ def load_archive_preview(source: Path, source_type: str):
     return settings, preview
 
 
+def load_host_preview(preview_file: Path) -> ArchivePreview:
+    try:
+        payload = json.loads(preview_file.read_text(encoding="utf-8"))
+        return enforce_rules(ArchivePreview.model_validate(payload))
+    except Exception as exc:
+        console.print(f"[red]error[/red] Invalid ArchivePreview JSON: {exc}")
+        raise typer.Exit(code=1) from exc
+
+
 @app.command("show-updates")
 def show_updates(
     source: Path,
@@ -137,6 +155,38 @@ def show_updates(
         console.print_json(json.dumps(payload, ensure_ascii=False))
         return
     render_preview(payload)
+
+
+@app.command("apply-preview")
+def apply_preview_file(
+    source: Path,
+    preview_file: Path = typer.Option(..., "--preview-file"),
+    reindex: bool = typer.Option(True, "--index/--no-index", help="Rebuild the retrieval index after archiving."),
+    as_json: bool = False,
+) -> None:
+    settings = load_settings()
+    preview = load_host_preview(preview_file)
+    written = apply_preview(preview, source.resolve(), settings)
+    if reindex:
+        indexed_count = build_index(settings)
+    else:
+        indexed_count = None
+
+    payload = {
+        "preview": preview.model_dump(mode="json"),
+        "written": [str(path) for path in written],
+        "indexed_count": indexed_count,
+        "index_db": str(settings.index_db),
+    }
+    if as_json:
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+        return
+
+    render_preview(payload["preview"])
+    for path in written:
+        console.print(f"[green]archived[/green] {path}")
+    if indexed_count is not None:
+        console.print(f"[green]indexed[/green] {indexed_count} documents into {settings.index_db}")
 
 
 @app.command("archive")
@@ -171,6 +221,33 @@ def index() -> None:
     settings = load_settings()
     count = build_index(settings)
     console.print(f"[green]indexed[/green] {count} documents into {settings.index_db}")
+
+
+@app.command()
+def search(question: str, scope: Optional[str] = None, limit: int = 5, as_json: bool = False) -> None:
+    settings = load_settings()
+    resolved_scope = parse_scope(scope or settings.default_scope)
+    results = search_index(settings, question, resolved_scope, limit=limit)
+    payload = [result.model_dump(mode="json") for result in results]
+    if as_json:
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+        return
+
+    table = Table(title=f"Wiki Search: {question}")
+    table.add_column("Title")
+    table.add_column("Status")
+    table.add_column("Page Type")
+    table.add_column("Source Type")
+    table.add_column("Excerpt")
+    for result in payload:
+        table.add_row(
+            result["title"],
+            result["status"],
+            result["page_type"],
+            result["source_type"],
+            result["excerpt"],
+        )
+    console.print(table)
 
 
 @app.command()

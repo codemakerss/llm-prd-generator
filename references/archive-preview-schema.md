@@ -1,7 +1,8 @@
 # ArchivePreview Schema
 
-`archive`, `show-updates`, and `apply` use `ArchivePreview`, not `WikiUpdatePlan`.
-Archive extraction requires a configured LLM; invalid or unavailable LLM responses must stop the archive flow.
+`ArchivePreview` is the shared archive contract for host-model skill mode and standalone CLI/API mode.
+In host-model mode, Claude Code, Codex, or OpenCode generates this JSON from `convert --as-json`, then `apply-preview` validates and writes it.
+In standalone CLI/API mode, `archive`, `show-updates`, and `apply` generate the same shape through a configured OpenAI-compatible LLM.
 `team_history` may produce `prd_pattern`, but those updates are enforced as `draft`.
 
 ```json

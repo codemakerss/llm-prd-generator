@@ -10,12 +10,12 @@ description: Build or query a standalone Obsidian-compatible LLM Wiki from PDF, 
 Use this skill when you want a fully standalone LLM Wiki workflow:
 
 - convert common files into Markdown with bundled document parsers
-- archive source documents directly after LLM extraction
+- archive source documents using the host model in Claude Code, Codex, or OpenCode
 - optionally preview what knowledge updates would be archived
 - build a local searchable index
 - answer questions from stable or draft wiki knowledge
 
-This skill does not depend on BA-Agent code, does not use `WikiUpdatePlan`, and does not require an approval step. By default, run `archive` so the LLM extracts structured knowledge, writes pages, and rebuilds the index for recall.
+This skill does not depend on BA-Agent code, does not use `WikiUpdatePlan`, and does not require an approval step. By default, use the current host model to generate `ArchivePreview` JSON, then use the CLI only for deterministic conversion, validation, writing, indexing, and retrieval. Standalone CLI mode can still use an OpenAI-compatible API if configured.
 
 ## Initialization Guard
 
@@ -98,26 +98,42 @@ Run:
 
 Use this when you only want to inspect the Markdown extraction result.
 
-### 3. Archive a document directly
+For host-model archiving, use structured JSON:
+
+```bash
+.venv/bin/python skill/llm-wiki-generator/scripts/cli.py convert path/to/file.pdf --as-json
+```
+
+### 3. Archive with the host model by default
+
+Use this default flow when the skill is running inside Claude Code, Codex, or OpenCode:
+
+1. run `convert --as-json` on the source file
+2. use the current host model to produce strict `ArchivePreview` JSON from the converted Markdown
+3. write that JSON to a temporary preview file
+4. run `apply-preview` to validate, write, and index
 
 Run:
+
+```bash
+.venv/bin/python skill/llm-wiki-generator/scripts/cli.py apply-preview path/to/file.docx --preview-file /tmp/archive-preview.json
+```
+
+This command validates the host-generated preview, enforces source-boundary rules, writes raw/wiki files, and rebuilds the index by default so the archived knowledge is ready for recall.
+
+Use `--no-index` only when batching many files and planning to run `index` once at the end.
+
+### 4. Standalone API archive mode
+
+If the user explicitly wants to run the Python CLI outside a host agent, or has configured an OpenAI-compatible API in `.env`, run:
 
 ```bash
 .venv/bin/python skill/llm-wiki-generator/scripts/cli.py archive path/to/file.docx --source-type team_history
 ```
 
-This step uses:
+Standalone archive requires `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL`.
 
-- bundled parsers for document conversion
-- an OpenAI-compatible model if configured
-
-Archive requires a configured OpenAI-compatible model. If the model is missing, unavailable, or returns invalid JSON, stop and ask the user to fix `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL` before archiving.
-
-Output is an `ArchivePreview` summary plus the written wiki paths. The command rebuilds the index by default so the archived knowledge is ready for `answer`.
-
-Use `--no-index` only when batching many files and planning to run `index` once at the end.
-
-### 4. Optional preview or manual apply
+### 5. Optional preview or manual apply
 
 If the user explicitly wants to inspect the LLM output without writing files, run:
 
@@ -139,7 +155,7 @@ The writer is deterministic. It:
 - updates `20-wiki/index.md`
 - appends to `20-wiki/log.md`
 
-### 5. Build the local index manually
+### 6. Build the local index manually
 
 Run:
 
@@ -147,9 +163,24 @@ Run:
 .venv/bin/python skill/llm-wiki-generator/scripts/cli.py index
 ```
 
-This builds a local SQLite index for wiki retrieval. It is already run by `archive` unless `--no-index` is used.
+This builds a local SQLite index for wiki retrieval. It is already run by `apply-preview` and `archive` unless `--no-index` is used.
 
-### 6. Answer from the wiki
+### 7. Recall from the wiki with the host model
+
+Use this default flow for knowledge recall inside Claude Code, Codex, or OpenCode:
+
+1. run deterministic search:
+
+```bash
+.venv/bin/python skill/llm-wiki-generator/scripts/cli.py search "当前已知的业务约束是什么？" --scope stable-draft --as-json
+```
+
+2. use the current host model to answer from only the returned documents
+3. cite page titles from the search results
+
+Default scope is `stable`; use `stable-draft` when team history or exploratory notes should be included.
+
+### 8. Standalone CLI answer mode
 
 Run:
 
@@ -173,13 +204,18 @@ Default scope is `stable`. You can override it:
 
 ## Environment
 
-Copy `.env.example` and set:
+For host-model skill usage, `.env` only needs wiki paths:
 
+- `WIKI_ROOT`
+- `WIKI_INDEX_DB`
+- `WIKI_SCOPE`
+
+For standalone OpenAI-compatible CLI mode, also set:
+
+- `LLM_PROVIDER`
 - `LLM_BASE_URL`
 - `LLM_API_KEY`
 - `LLM_MODEL`
-- `WIKI_ROOT`
-- `WIKI_INDEX_DB`
 
 The LLM endpoint must support the OpenAI chat-completions format.
 

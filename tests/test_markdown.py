@@ -1,11 +1,14 @@
 from pathlib import Path
 
+import json
 import pytest
+from typer.testing import CliRunner
 from docx import Document
 from openpyxl import Workbook
 from pptx import Presentation
 from reportlab.pdfgen import canvas
 
+import cli as cli_module
 from llm_wiki_generator.markdown import SUPPORTED_EXTENSIONS, assert_supported, convert_to_markdown
 
 
@@ -22,6 +25,20 @@ def test_convert_txt_to_markdown(tmp_path: Path) -> None:
     assert document.title == "sample"
     assert "hello" in document.markdown
     assert "world" in document.markdown
+
+
+def test_convert_command_can_emit_json_for_host_model(tmp_path: Path) -> None:
+    source = tmp_path / "sample.txt"
+    source.write_text("hello\nworld\n", encoding="utf-8")
+    runner = CliRunner()
+
+    result = runner.invoke(cli_module.app, ["convert", str(source), "--as-json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["title"] == "sample"
+    assert payload["extension"] == ".txt"
+    assert "hello" in payload["markdown"]
 
 
 def test_unsupported_extension_raises(tmp_path: Path) -> None:

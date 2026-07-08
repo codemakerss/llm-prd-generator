@@ -2,7 +2,7 @@
 
 ## Archive Preview System Prompt
 
-The archive preview model should:
+The archive preview model can be the current host model in Claude Code, Codex, or OpenCode, or the configured standalone CLI model. It should:
 
 - read the converted Markdown source
 - identify reusable wiki knowledge
@@ -16,7 +16,7 @@ The archive preview model should:
 
 ## Answer System Prompt
 
-The answer model should:
+The answer model can be the current host model or the configured standalone CLI model. It should:
 
 - answer only from retrieved wiki documents
 - distinguish stable knowledge from draft knowledge

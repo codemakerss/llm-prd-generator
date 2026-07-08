@@ -1,5 +1,9 @@
+import json
 from pathlib import Path
 
+from typer.testing import CliRunner
+
+import cli as cli_module
 from llm_wiki_generator import archive as archive_module
 from llm_wiki_generator.answer import answer_question
 from llm_wiki_generator.archive import apply_preview, archive_source
@@ -69,3 +73,24 @@ def test_index_and_answer_flow(monkeypatch, tmp_path: Path) -> None:
     assert results
     assert "指标" in answer
     assert "无模型模式" in answer
+
+
+def test_search_command_emits_json_without_llm(monkeypatch, tmp_path: Path) -> None:
+    source = tmp_path / "industry.txt"
+    source.write_text("PRD 模板\n目标用户\n指标设计\n风险控制\n", encoding="utf-8")
+    settings = make_settings(tmp_path)
+    monkeypatch.setattr(archive_module, "OpenAICompatibleLLM", FakeIndustryLLM)
+
+    preview = archive_source(source, SourceType.INDUSTRY_PRACTICE, settings)
+    apply_preview(preview, source, settings)
+    build_index(settings)
+    search_settings = make_settings(tmp_path, with_llm=False)
+    runner = CliRunner()
+    monkeypatch.setattr(cli_module, "load_settings", lambda: search_settings)
+
+    result = runner.invoke(cli_module.app, ["search", "指标", "--scope", "stable", "--as-json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload
+    assert payload[0]["title"] == "Metric Review Pattern"

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -173,3 +174,46 @@ def test_archive_command_writes_and_reindexes(monkeypatch: pytest.MonkeyPatch, t
     assert (settings.wiki_root / "10-raw/business_fact/business.txt").exists()
     assert settings.index_db.exists()
     assert search_index(settings, "用户增长", Scope.STABLE, limit=3)
+
+
+def test_apply_preview_command_writes_host_generated_preview_without_llm(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "history.txt"
+    source.write_text("历史 PRD\n用户背景\n技术方案\n", encoding="utf-8")
+    preview_file = tmp_path / "preview.json"
+    preview_file.write_text(json.dumps(FakeLLM(make_settings(tmp_path)).complete_json("", "")), encoding="utf-8")
+    settings = make_settings(tmp_path, with_llm=False)
+    runner = CliRunner()
+    monkeypatch.setattr(cli_module, "load_settings", lambda: settings)
+
+    result = runner.invoke(
+        cli_module.app,
+        ["apply-preview", str(source), "--preview-file", str(preview_file), "--as-json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["indexed_count"] >= 1
+    assert (settings.wiki_root / "10-raw/team_history/history.txt").exists()
+    assert settings.index_db.exists()
+    assert search_index(settings, "PRD", Scope.STABLE_DRAFT, limit=3)
+
+
+def test_apply_preview_command_rejects_invalid_preview_before_writing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "history.txt"
+    source.write_text("历史 PRD\n用户背景\n技术方案\n", encoding="utf-8")
+    preview_file = tmp_path / "broken.json"
+    preview_file.write_text('{"title": "missing fields"}', encoding="utf-8")
+    settings = make_settings(tmp_path, with_llm=False)
+    runner = CliRunner()
+    monkeypatch.setattr(cli_module, "load_settings", lambda: settings)
+
+    result = runner.invoke(cli_module.app, ["apply-preview", str(source), "--preview-file", str(preview_file)])
+
+    assert result.exit_code == 1
+    assert "Invalid ArchivePreview JSON" in result.output
+    assert not (settings.wiki_root / "10-raw/team_history/history.txt").exists()
+    assert not (settings.wiki_root / "20-wiki/index.md").exists()

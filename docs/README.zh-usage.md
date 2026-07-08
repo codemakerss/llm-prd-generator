@@ -8,13 +8,15 @@
 
 ## 1. 功能概览
 
-这个项目提供 5 个核心能力：
+这个项目提供这些核心能力：
 
 - 文档转 Markdown：`convert`
-- 直接归档：`archive`
+- 宿主模型归档：`convert --as-json` + `apply-preview`
+- 独立 CLI 直接归档：`archive`
 - 可选预览：`show-updates`
 - 只写入不重建索引：`apply`
 - 构建检索索引：`index`
+- 确定性召回：`search`
 - 从 wiki 问答：`answer`
 
 支持的输入格式：
@@ -42,7 +44,7 @@ npx install skill llm-wiki-generator
 1. 检查是否存在 `Python 3`
 2. 检查是否存在 `pip`
 3. 检查 `requirements.txt` 中的依赖是否满足
-4. 检查 `.env` 是否存在以及关键项是否已配置
+4. 检查 `.env` 是否存在以及 wiki 路径是否已配置
 
 如果不满足，skill 应明确提示用户还缺什么。例如：
 
@@ -85,7 +87,8 @@ WIKI_SCOPE=stable
 - `WIKI_ROOT` 是知识库落盘目录
 - `WIKI_INDEX_DB` 是本地 SQLite 索引文件
 - `WIKI_SCOPE` 默认问答范围，默认是 `stable`
-- `archive`、`show-updates` 和 `apply` 必须配置 `LLM_PROVIDER`、`LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`；`answer` 在无模型时仍可退回到摘录式回答
+- 安装为 Claude Code、Codex、OpenCode skill 后，归档和回答默认使用宿主模型，不需要配置 `LLM_API_KEY`
+- 只有独立 CLI/API 模式才需要配置 `LLM_PROVIDER`、`LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`
 
 ## 3. 初始化知识库
 
@@ -165,12 +168,18 @@ python scripts/cli.py convert path/to/file.pdf
 - 先验证源文件内容是否可被正常抽取
 - 调试导入前的原始文本质量
 
-### `archive`
+### 宿主模型归档
 
-经过 LLM 抽取后直接写入知识库，并默认重建检索索引。
+安装为 skill 后，推荐由 Claude Code、Codex 或 OpenCode 的当前模型负责抽取知识，CLI 只做转换、校验、写入和建索引。
 
 ```bash
-python scripts/cli.py archive path/to/file.docx --source-type team_history
+python scripts/cli.py convert path/to/file.docx --as-json
+```
+
+宿主模型读取返回的 Markdown 后，生成符合 `ArchivePreview` schema 的 JSON，并写入临时文件，例如 `/tmp/archive-preview.json`。然后执行：
+
+```bash
+python scripts/cli.py apply-preview path/to/file.docx --preview-file /tmp/archive-preview.json
 ```
 
 执行后会发生这些事：
@@ -185,10 +194,20 @@ python scripts/cli.py archive path/to/file.docx --source-type team_history
 如果你准备批量导入很多文件，可以先跳过自动索引：
 
 ```bash
-python scripts/cli.py archive path/to/file.docx --source-type team_history --no-index
+python scripts/cli.py apply-preview path/to/file.docx --preview-file /tmp/archive-preview.json --no-index
 ```
 
 然后在一批文件结束后手动执行 `index`。
+
+### `archive`
+
+独立 CLI/API 模式下，可以让 Python CLI 自己调用 OpenAI-compatible API 完成抽取和归档：
+
+```bash
+python scripts/cli.py archive path/to/file.docx --source-type team_history
+```
+
+这个模式需要在 `.env` 中配置 `LLM_PROVIDER`、`LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`。
 
 ### `show-updates`
 
@@ -226,7 +245,7 @@ python scripts/cli.py apply path/to/file.docx --source-type team_history
 4. 更新 `20-wiki/index.md`
 5. 追加 `20-wiki/log.md`
 
-如果你希望归档后立即用于召回，优先使用 `archive`。
+如果你希望归档后立即用于召回，skill 模式优先使用 `apply-preview`，独立 CLI/API 模式优先使用 `archive`。
 
 ### `index`
 
@@ -237,6 +256,16 @@ python scripts/cli.py index
 ```
 
 它会扫描 `20-wiki/` 下的 Markdown 页面，写入 SQLite 和 FTS 索引，用于后续 `answer` 检索。
+
+### `search`
+
+确定性检索本地 wiki，不调用任何模型，适合让 Claude Code、Codex 或 OpenCode 基于召回结果回答：
+
+```bash
+python scripts/cli.py search "团队历史里提到的设计思路有哪些？" --scope stable-draft --as-json
+```
+
+返回结果包含页面标题、状态、页面类型、来源类型、路径和摘录。宿主模型回答时应只基于这些结果，并引用页面标题。
 
 ### `answer`
 
@@ -316,44 +345,52 @@ python scripts/cli.py answer "团队历史里提到的设计思路有哪些？" 
 
 ```bash
 python scripts/cli.py init
-python scripts/cli.py archive docs/team-retro.docx --source-type team_history
-python scripts/cli.py answer "团队过去在架构上有哪些反复出现的思路？" --scope stable-draft
+python scripts/cli.py convert docs/team-retro.docx --as-json
+# Claude Code / Codex / OpenCode 生成 ArchivePreview JSON 到 /tmp/archive-preview.json
+python scripts/cli.py apply-preview docs/team-retro.docx --preview-file /tmp/archive-preview.json
+python scripts/cli.py search "团队过去在架构上有哪些反复出现的思路？" --scope stable-draft --as-json
 ```
 
 建议习惯：
 
-- 日常使用优先 `archive`，让 LLM 生成结果后直接归档并重建索引
-- 只有需要审计 LLM 输出时，才先运行 `show-updates`
-- 批量归档时可以使用 `archive --no-index`，最后统一执行一次 `index`
+- 安装为 skill 后，日常优先使用宿主模型归档流程
+- 独立 CLI/API 使用者再使用 `archive`
+- 批量归档时可以使用 `apply-preview --no-index`，最后统一执行一次 `index`
 - 第一次初始化完成后，立即决定是否现在导入第一份文档，避免初始化后流程中断
 
 ## 7. 模型要求
 
-上传归档流程必须配置兼容 OpenAI Chat Completions 的模型接口：
+Skill 宿主模型模式：
 
-- `show-updates` 必须由模型生成归档预览
-- `archive` 和 `apply` 会先走 LLM 抽取，如果模型不可用或返回非法 JSON，会直接失败
-- 归档预览失败时，不会复制原文件，也不会写入 wiki 页面
+- Claude Code、Codex、OpenCode 当前会话模型负责生成 `ArchivePreview` 和综合回答
+- CLI 不需要 `LLM_API_KEY`
+- `apply-preview` 只负责校验和写入，坏 JSON 会直接失败且不写入 raw/wiki
 
-问答流程仍保留无模型可用性：
+独立 CLI/API 模式：
 
-- `answer` 会退化为摘录式回答
+- `archive`、`show-updates` 和 `apply` 需要 OpenAI-compatible 配置
+- `answer` 在无模型时仍可退化为摘录式回答
 
-也就是说，归档是严格模型模式；已经建好索引的内容，仍可在无模型时做摘录式检索回答。
+也就是说，skill 模式使用宿主模型；CLI-only 模式可以选择配置外部 API。
 
 ## 8. 总结
 
 如果你想把“原始资料 -> 结构化知识 -> 可检索问答”做成一个可控、可持续更新的流程，这个项目的推荐使用方式就是：
 
 1. `init`
-2. `archive`
-3. `answer`
+2. `convert --as-json`
+3. 宿主模型生成 `ArchivePreview`
+4. `apply-preview`
+5. `search --as-json`
+6. 宿主模型回答
 
 最重要的心智模型是：
 
 - `convert` 是抽取
-- `archive` 是 LLM 抽取、归档、建索引的一步式入口
+- `apply-preview` 是宿主模型归档结果的确定性写入入口
+- `archive` 是独立 CLI/API 的一步式入口
 - `show-updates` 是可选审阅
 - `apply` 是只归档、不自动建索引
 - `index` 是检索准备
-- `answer` 是消费知识
+- `search` 是确定性召回
+- `answer` 是 CLI-only 的问答入口；skill 模式优先由宿主模型回答

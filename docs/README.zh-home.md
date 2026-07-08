@@ -1,9 +1,9 @@
 # LLM Wiki Generator
 
-一个以 LLM 直接归档为核心的文档归档与检索工作流，用来构建结构化、本地化、兼容 Obsidian 的 LLM Wiki。
+一个以宿主模型归档与本地检索为核心的文档归档工作流，用来构建结构化、本地化、兼容 Obsidian 的 LLM Wiki。
 
-LLM Wiki Generator 通过一条直接流水线把原始文件转成可追溯的 wiki 知识：`archive -> answer`。
-需要审计时，也可以先用 `show-updates` 查看 LLM 会写入什么。
+LLM Wiki Generator 通过一条 host-model 流水线把原始文件转成可追溯的 wiki 知识：`convert -> host model -> apply-preview -> search -> host answer`。
+安装为 skill 后，Claude Code、Codex、OpenCode 可以使用自身模型完成归档抽取和回答综合；Python CLI 只负责确定性的转换、校验、写入、索引和检索。
 
 [Back to README](../README.md) | [Docs Index](index.md) | [中文使用说明](README.zh-usage.md)
 
@@ -19,8 +19,8 @@ LLM Wiki Generator 通过一条直接流水线把原始文件转成可追溯的 
 它不把源文件当作聊天上下文，而是把它们当作 LLM-backed knowledge compiler 的输入：
 
 1. 先把源资料转换成规范化文本
-2. 用 LLM 抽取结构化 wiki 更新
-3. 直接把知识写入 vault
+2. 让宿主模型抽取结构化 wiki 更新
+3. 让 CLI 校验并把知识写入 vault
 4. 最后在结果上建立检索索引
 
 目标不只是“能回答问题”。
@@ -60,13 +60,14 @@ flowchart TD
     B -- "是" --> J["提供源文档"]
     I --> J
 
-    J --> K["archive"]
-    K --> L["LLM 抽取结构化更新"]
-    L --> M["写入原文件与 wiki 页面"]
+    J --> K["convert --as-json"]
+    K --> L["宿主模型生成 ArchivePreview JSON"]
+    L --> M["apply-preview 写入原文件与 wiki 页面"]
     M --> P["index"]
-    P --> Q["answer"]
+    P --> Q["search --as-json"]
+    Q --> S["宿主模型基于召回结果回答"]
 
-    J -. "可选审计路径" .-> R["show-updates"]
+    J -. "独立 API 路径" .-> R["archive"]
 ```
 
 ## 首次使用路径
@@ -77,17 +78,18 @@ flowchart TD
 2. 运行 `bootstrap-status`
 3. 如果还没初始化，就运行 `bootstrap-init`
 4. 提供第一份源文档
-5. 执行 `archive`，让 LLM 抽取并直接写入知识库
-6. 开始基于已索引 wiki 提问
+5. 执行 `convert --as-json`
+6. 让宿主模型生成 `ArchivePreview` JSON，并用 `apply-preview` 写入
+7. 用 `search --as-json` 召回，再让宿主模型回答
 
 如果你已经明确知道 vault 路径，也可以先配好 `.env`，然后直接调用 `init`。
-上传归档的 `archive`、`show-updates` 和 `apply` 必须配置 OpenAI-compatible LLM；无模型 fallback 只保留给问答摘录场景。
+宿主模型 skill 模式不需要 `LLM_API_KEY`；独立 CLI/API 模式仍可通过 `.env` 配置 OpenAI-compatible API。
 
 ## 核心特性
 
 - 支持 `PDF`、`DOCX`、`PPTX`、`XLSX`、`TXT`
-- 采用 LLM-first 的直接归档方式
-- 上传归档预览必须由 LLM 生成
+- 安装为 skill 后默认使用 Claude Code、Codex、OpenCode 的宿主模型做归档和回答
+- 提供确定性 CLI 工具负责转换、写入、索引、检索
 - 直接归档后默认重建检索索引
 - 输出为兼容 Obsidian 的 vault 结构
 - 原始文件与结构化知识分层保存
@@ -156,22 +158,22 @@ python scripts/cli.py init
 python scripts/cli.py convert path/to/file.pdf
 ```
 
-直接归档并重建索引：
+宿主模型归档流程：
 
 ```bash
-python scripts/cli.py archive path/to/file.docx --source-type team_history
+python scripts/cli.py convert path/to/file.docx --as-json
 ```
 
-可选预览归档更新：
+宿主模型生成 `ArchivePreview` JSON 后：
 
 ```bash
-python scripts/cli.py show-updates path/to/file.docx --source-type team_history
+python scripts/cli.py apply-preview path/to/file.docx --preview-file /tmp/archive-preview.json
 ```
 
-归档但不重建索引：
+宿主模型召回流程：
 
 ```bash
-python scripts/cli.py archive path/to/file.docx --source-type team_history --no-index
+python scripts/cli.py search "当前有哪些已确认的业务约束？" --scope stable-draft --as-json
 ```
 
 构建检索索引：
@@ -180,13 +182,13 @@ python scripts/cli.py archive path/to/file.docx --source-type team_history --no-
 python scripts/cli.py index
 ```
 
-从 wiki 中提问：
+独立 CLI/API 归档：
 
 ```bash
-python scripts/cli.py answer "当前有哪些已确认的业务约束？"
+python scripts/cli.py archive path/to/file.docx --source-type team_history
 ```
 
-包含草稿知识一起检索：
+独立 CLI 问答：
 
 ```bash
 python scripts/cli.py answer "团队历史里提到过哪些设计思路？" --scope stable-draft
@@ -239,11 +241,11 @@ index.sqlite3
 
 核心设计选择包括：
 
-- 默认直接 LLM 归档
+- skill 模式默认使用宿主模型归档和回答
 - deterministic archive application
 - 持久保存原始文件
 - 对归档后的 markdown 做本地检索
-- 归档预览必须使用 LLM，问答场景保留无模型摘录式 fallback
+- 独立 CLI 模式仍支持 OpenAI-compatible API
 
 最终效果更像一个小型 knowledge compiler，而不是简单包了一层文档聊天。
 
@@ -261,7 +263,7 @@ index.sqlite3
 - Rich
 - Pydantic
 - SQLite FTS
-- OpenAI-compatible API
+- 宿主模型 skill 模式，以及可选 OpenAI-compatible API 模式
 - DOCX / PPTX / XLSX / PDF 文档解析库
 
 ## 延伸阅读

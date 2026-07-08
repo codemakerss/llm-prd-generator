@@ -8,13 +8,15 @@ This guide is written for people who want to ingest files, archive them directly
 
 ## 1. What It Does
 
-The project provides five core capabilities:
+The project provides these core capabilities:
 
 - Markdown conversion with `convert`
-- direct archive with `archive`
+- host-model archive with `convert --as-json` plus `apply-preview`
+- standalone direct archive with `archive`
 - optional archive preview with `show-updates`
 - write without automatic reindexing with `apply`
 - local indexing with `index`
+- deterministic retrieval with `search`
 - question answering with `answer`
 
 Supported input formats:
@@ -42,7 +44,7 @@ Recommended post-install behavior:
 1. verify that `Python 3` is installed
 2. verify that `pip` is available
 3. verify that the packages from `requirements.txt` are available
-4. verify that `.env` exists and that core configuration values are present
+4. verify that `.env` exists and that wiki path values are present
 
 If the environment is not ready, the skill should report what is missing, for example:
 
@@ -85,7 +87,8 @@ Notes:
 - `WIKI_ROOT` is where the wiki vault is written
 - `WIKI_INDEX_DB` is the local SQLite index file
 - `WIKI_SCOPE` controls the default retrieval scope for `answer`
-- `archive`, `show-updates`, and `apply` require `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL`; `answer` can still fall back to extractive output without a model
+- when installed as a Claude Code, Codex, or OpenCode skill, archive extraction and answer synthesis use the host model and do not require `LLM_API_KEY`
+- only standalone CLI/API mode requires `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL`
 
 ## 3. Initialize the Vault
 
@@ -165,12 +168,18 @@ Useful when you want to:
 - validate that the source document can be parsed cleanly
 - debug ingestion quality before archive preview
 
-### `archive`
+### Host-Model Archive
 
-Run LLM extraction, write the result into the wiki, and rebuild the retrieval index by default.
+When installed as a skill, prefer letting Claude Code, Codex, or OpenCode perform the knowledge extraction while the CLI handles conversion, validation, writing, and indexing.
 
 ```bash
-python scripts/cli.py archive path/to/file.docx --source-type team_history
+python scripts/cli.py convert path/to/file.docx --as-json
+```
+
+The host model reads the returned Markdown, generates strict `ArchivePreview` JSON, and writes it to a temporary file such as `/tmp/archive-preview.json`. Then run:
+
+```bash
+python scripts/cli.py apply-preview path/to/file.docx --preview-file /tmp/archive-preview.json
 ```
 
 What it does:
@@ -186,10 +195,20 @@ What it does:
 If you are importing many files and want to reindex once at the end, use:
 
 ```bash
-python scripts/cli.py archive path/to/file.docx --source-type team_history --no-index
+python scripts/cli.py apply-preview path/to/file.docx --preview-file /tmp/archive-preview.json --no-index
 ```
 
 Then run `index` after the batch.
+
+### `archive`
+
+In standalone CLI/API mode, the Python CLI can call an OpenAI-compatible API to perform extraction and archive directly:
+
+```bash
+python scripts/cli.py archive path/to/file.docx --source-type team_history
+```
+
+This mode requires `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL` in `.env`.
 
 ### `show-updates`
 
@@ -228,7 +247,7 @@ What it does:
 5. updates `20-wiki/index.md`
 6. appends an entry to `20-wiki/log.md`
 
-If you want the archived knowledge to be immediately available for recall, prefer `archive`.
+If you want archived knowledge to be immediately available for recall, prefer `apply-preview` in skill mode or `archive` in standalone CLI/API mode.
 
 ### `index`
 
@@ -239,6 +258,16 @@ python scripts/cli.py index
 ```
 
 This scans Markdown files under `20-wiki/` and writes them into a SQLite + FTS index used by `answer`.
+
+### `search`
+
+Search the local wiki deterministically without calling any model. This is the preferred recall command for Claude Code, Codex, or OpenCode:
+
+```bash
+python scripts/cli.py search "What design ideas were mentioned in team history?" --scope stable-draft --as-json
+```
+
+The output includes page title, status, page type, source type, path, score, and excerpt. The host model should answer using only those results and cite page titles.
 
 ### `answer`
 
@@ -318,45 +347,53 @@ Assume you have a historical team document at `docs/team-retro.docx`:
 
 ```bash
 python scripts/cli.py init
-python scripts/cli.py archive docs/team-retro.docx --source-type team_history
-python scripts/cli.py answer "What architecture ideas kept recurring over time?" --scope stable-draft
+python scripts/cli.py convert docs/team-retro.docx --as-json
+# Claude Code / Codex / OpenCode writes ArchivePreview JSON to /tmp/archive-preview.json
+python scripts/cli.py apply-preview docs/team-retro.docx --preview-file /tmp/archive-preview.json
+python scripts/cli.py search "What architecture ideas kept recurring over time?" --scope stable-draft --as-json
 ```
 
 Recommended habit:
 
-- use `archive` for daily ingestion so LLM output is written and indexed immediately
-- use `show-updates` only when you need to audit the proposed output first
-- use `archive --no-index` for batch imports, then run `index` once at the end
+- use host-model archive for daily skill usage
+- use `archive` for standalone CLI/API usage
+- use `apply-preview --no-index` for batch imports, then run `index` once at the end
 - use `stable-draft` when historical or exploratory material matters
 - after first-time initialization, decide immediately whether to ingest the first document so the onboarding flow can continue without interruption
 
 ## 7. Model Requirements
 
-For archive upload flows, an OpenAI-compatible model is required:
+For skill host-model mode:
 
-- `show-updates` requires a model-generated archive preview
-- `archive` and `apply` fail during LLM extraction if the model is unavailable or returns invalid JSON
-- failed archive preview does not copy raw files or write wiki pages
+- Claude Code, Codex, or OpenCode generates `ArchivePreview` and synthesizes answers
+- the CLI does not require `LLM_API_KEY`
+- `apply-preview` validates and writes only; invalid JSON fails without writing raw/wiki files
 
-For answer flows, no-model mode is still usable:
+For standalone CLI/API mode:
 
+- `archive`, `show-updates`, and `apply` require OpenAI-compatible configuration
 - `answer` falls back to an extractive response style
 
-That means archiving is strict, while retrieval remains usable for already-indexed content.
+That means skill mode uses the host model, while CLI-only mode can opt into an external API.
 
 ## 8. Mental Model
 
 The recommended way to think about the workflow is:
 
 1. `init` prepares the vault
-2. `archive` extracts, writes, and indexes knowledge
-3. `answer` consumes the archived knowledge
+2. `convert --as-json` exposes source Markdown to the host model
+3. host model creates `ArchivePreview`
+4. `apply-preview` validates, writes, and indexes
+5. `search --as-json` retrieves local knowledge
+6. host model answers from retrieved docs
 
 The key distinction is simple:
 
 - `convert` extracts
-- `archive` extracts with LLM, archives, and indexes
+- `apply-preview` deterministically writes host-generated archive output
+- `archive` is the standalone CLI/API one-step entrypoint
 - `show-updates` optionally reviews
 - `apply` archives without automatic reindexing
 - `index` prepares retrieval
-- `answer` uses the knowledge base
+- `search` deterministically retrieves
+- `answer` is the CLI-only answer entrypoint; skill mode should prefer host-model answers
