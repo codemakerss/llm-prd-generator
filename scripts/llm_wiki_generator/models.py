@@ -6,6 +6,22 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+class CompatBaseModel(BaseModel):
+    @classmethod
+    def model_validate(cls, value):
+        parser = getattr(super(), "model_validate", None)
+        if parser is not None:
+            return parser(value)
+        return cls.parse_obj(value)
+
+    def model_dump(self, *args, **kwargs):
+        dumper = getattr(super(), "model_dump", None)
+        if dumper is not None:
+            return dumper(*args, **kwargs)
+        kwargs.pop("mode", None)
+        return self.dict(*args, **kwargs)
+
+
 class SourceType(str, Enum):
     BUSINESS_FACT = "business_fact"
     INDUSTRY_PRACTICE = "industry_practice"
@@ -35,12 +51,12 @@ class Scope(str, Enum):
     ALL = "all"
 
 
-class EvidenceItem(BaseModel):
+class EvidenceItem(CompatBaseModel):
     snippet: str
     reason: str
 
 
-class UpdateItem(BaseModel):
+class UpdateItem(CompatBaseModel):
     action: Literal["create_or_update", "conflict", "deprecate"] = "create_or_update"
     page_type: PageType
     title: str
@@ -54,7 +70,7 @@ class UpdateItem(BaseModel):
     reason: str
 
 
-class ArchivePreview(BaseModel):
+class ArchivePreview(CompatBaseModel):
     title: str
     source_type: SourceType
     source_path: str
@@ -62,7 +78,7 @@ class ArchivePreview(BaseModel):
     updates: list[UpdateItem] = Field(default_factory=list)
 
 
-class RetrievedDocument(BaseModel):
+class RetrievedDocument(CompatBaseModel):
     path: str
     title: str
     page_type: str

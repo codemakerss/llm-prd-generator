@@ -1,63 +1,40 @@
 ---
-name: llm-wiki-generator
-description: Build or query a standalone Obsidian-compatible LLM Wiki from PDF, DOCX, PPTX, XLSX, TXT, and Markdown sources. Use when you need to convert files to Markdown, preview archive updates, write structured wiki pages, index the stable knowledge base, or answer questions from the wiki without depending on BA-Agent code.
+name: llm-prd-generator
+description: Generate evidence-backed PRDs and OpenSpec change artifacts from an Obsidian-compatible LLM Wiki. Use when you need to archive product knowledge, recall raw/wiki evidence, ask business questions until PRD completeness reaches 100%, and only then write proposal/spec/design/tasks/prd artifacts.
 ---
 
-# LLM Wiki Generator
+# LLM PRD Generator
 
-## Overview
+## What This Skill Does
 
-Use this skill when you want a fully standalone LLM Wiki workflow:
+Use this skill to turn archived product knowledge into implementation-ready PRDs.
 
-- convert common files into Markdown with bundled document parsers
-- archive source documents using the host model in Claude Code, Codex, or OpenCode
-- optionally preview what knowledge updates would be archived
-- build a local searchable index
-- answer questions from stable or draft wiki knowledge
+It supports two connected workflows:
 
-This skill does not depend on BA-Agent code, does not use `WikiUpdatePlan`, and does not require an approval step. By default, use the current host model to generate `ArchivePreview` JSON, then use the CLI only for deterministic conversion, validation, writing, indexing, and retrieval. Standalone CLI mode can still use an OpenAI-compatible API if configured.
+- knowledge archiving: convert source files, use the host model or standalone API to produce archive previews, apply them into an Obsidian-compatible vault, index the vault, and answer from stable/draft knowledge
+- PRD generation: read all wiki knowledge, retrieve evidence by tags and content, ask one business question at a time, enforce a 100% PRD completeness gate, then generate OpenSpec artifacts
+
+The PRD workflow is mandatory. Do not generate PRD or OpenSpec artifacts directly from a vague topic. Always run the business-question loop first.
 
 ## Initialization Guard
 
-Before doing any archive, indexing, or answer work, first check whether the wiki has already been initialized.
-
-Use:
+Before archive, indexing, answer, or PRD work, check initialization:
 
 ```bash
-.venv/bin/python skill/llm-wiki-generator/scripts/cli.py bootstrap-status --as-json
+.venv/bin/python skill/llm-prd-generator/scripts/cli.py bootstrap-status --as-json
 ```
 
-Behavior:
-
-- if `initialized=true`, continue with the normal workflow
-- if `initialized=false`, do not continue directly into archive or answer steps
-- instead, start a short onboarding dialogue with the user
-
-When initialization is missing, ask in this order:
-
-1. whether they want to initialize now
-2. which filesystem path should hold the wiki vault
-3. repeat the chosen path back to them and ask for confirmation
-
-After the user confirms, run:
+If `initialized=false`, ask whether to initialize, ask for the wiki vault path, confirm it, then run:
 
 ```bash
-.venv/bin/python skill/llm-wiki-generator/scripts/cli.py bootstrap-init /absolute/or/relative/wiki-root
+.venv/bin/python skill/llm-prd-generator/scripts/cli.py bootstrap-init /absolute/or/relative/wiki-root
 ```
 
-This will:
+This writes `WIKI_ROOT` and `WIKI_INDEX_DB` into `.env` and creates the vault structure.
 
-- write `WIKI_ROOT` into `.env`
-- write `WIKI_INDEX_DB` into `.env` as a sibling to the chosen wiki root
-- create the full vault structure under the confirmed path
+## Supported Source Files
 
-Immediately after a successful initialization, ask the user whether they want to provide their first document now.
-
-If the user declines initialization, stop the archive/query flow and explain that initialization is required before the skill can continue.
-
-## Supported Inputs
-
-The archive pipeline accepts these file types:
+The archive pipeline accepts:
 
 - `PDF`
 - `DOCX`
@@ -67,168 +44,181 @@ The archive pipeline accepts these file types:
 - `MD`
 - `Markdown`
 
-Markdown files are read as-is from `.md` and `.markdown` files. MarkItDown is not integrated in the current implementation.
+Markdown files are read as-is from `.md` and `.markdown` files.
 
-## Workflow
+## Knowledge Workflow
 
-### 1. Initialize a standalone vault
-
-Run:
+Initialize a vault:
 
 ```bash
-cp skill/llm-wiki-generator/.env.example skill/llm-wiki-generator/.env
-.venv/bin/python skill/llm-wiki-generator/scripts/cli.py init
+cp skill/llm-prd-generator/.env.example skill/llm-prd-generator/.env
+.venv/bin/python skill/llm-prd-generator/scripts/cli.py init
 ```
 
-This creates an Obsidian-compatible structure under `WIKI_ROOT`:
-
-- `10-raw/`
-- `20-wiki/sources/`
-- `20-wiki/entities/`
-- `20-wiki/concepts/`
-- `20-wiki/synthesis/`
-- `20-wiki/conflicts/`
-- `20-wiki/prd-patterns/`
-- `20-wiki/index.md`
-- `20-wiki/log.md`
-
-### 2. Convert a file to Markdown
-
-Run:
+Convert a source file:
 
 ```bash
-.venv/bin/python skill/llm-wiki-generator/scripts/cli.py convert path/to/file.pdf
+.venv/bin/python skill/llm-prd-generator/scripts/cli.py convert path/to/file.pdf
 ```
 
-Use this when you only want to inspect the Markdown extraction result.
-
-For host-model archiving, use structured JSON:
+For host-model archiving, use structured conversion output:
 
 ```bash
-.venv/bin/python skill/llm-wiki-generator/scripts/cli.py convert path/to/file.pdf --as-json
+.venv/bin/python skill/llm-prd-generator/scripts/cli.py convert path/to/file.pdf --as-json
 ```
 
-### 3. Archive with the host model by default
-
-Use this default flow when the skill is running inside Claude Code, Codex, or OpenCode:
-
-1. run `convert --as-json` on the source file
-2. use the current host model to produce strict `ArchivePreview` JSON from the converted Markdown
-3. write that JSON to a temporary preview file
-4. run `apply-preview` to validate, write, and index
-
-Run:
+Then use the current host model to generate strict `ArchivePreview` JSON from the converted Markdown, write that JSON to a temporary preview file, and apply it:
 
 ```bash
-.venv/bin/python skill/llm-wiki-generator/scripts/cli.py apply-preview path/to/file.docx --preview-file /tmp/archive-preview.json
+.venv/bin/python skill/llm-prd-generator/scripts/cli.py apply-preview path/to/file.docx --preview-file /tmp/archive-preview.json
 ```
 
-This command validates the host-generated preview, enforces source-boundary rules, writes raw/wiki files, and rebuilds the index by default so the archived knowledge is ready for recall.
+`apply-preview` validates the preview, enforces source-boundary rules, writes raw/wiki files, and rebuilds the retrieval index by default. Use `--no-index` only when batching many files.
 
-Use `--no-index` only when batching many files and planning to run `index` once at the end.
-
-### 4. Standalone API archive mode
-
-If the user explicitly wants to run the Python CLI outside a host agent, or has configured an OpenAI-compatible API in `.env`, run:
+Standalone API archive mode is available when `.env` contains an OpenAI-compatible model:
 
 ```bash
-.venv/bin/python skill/llm-wiki-generator/scripts/cli.py archive path/to/file.docx --source-type team_history
+.venv/bin/python skill/llm-prd-generator/scripts/cli.py archive path/to/file.docx --source-type team_history
 ```
 
-Standalone archive requires `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL`.
-
-### 5. Optional preview or manual apply
-
-If the user explicitly wants to inspect the LLM output without writing files, run:
+Optional preview-only mode:
 
 ```bash
-.venv/bin/python skill/llm-wiki-generator/scripts/cli.py show-updates path/to/file.docx --source-type team_history
+.venv/bin/python skill/llm-prd-generator/scripts/cli.py show-updates path/to/file.docx --source-type team_history
 ```
 
-If the user already wants to write but not rebuild the index, run:
-
+Build the local index:
 
 ```bash
-.venv/bin/python skill/llm-wiki-generator/scripts/cli.py apply path/to/file.docx --source-type team_history
+.venv/bin/python skill/llm-prd-generator/scripts/cli.py index
 ```
 
-The writer is deterministic. It:
-
-- copies the raw source into `10-raw/<source_type>/`
-- writes or updates wiki pages under `20-wiki/`
-- updates `20-wiki/index.md`
-- appends to `20-wiki/log.md`
-
-### 6. Build the local index manually
-
-Run:
+Search deterministically:
 
 ```bash
-.venv/bin/python skill/llm-wiki-generator/scripts/cli.py index
+.venv/bin/python skill/llm-prd-generator/scripts/cli.py search "当前已知的业务约束是什么？" --scope stable-draft --as-json
 ```
 
-This builds a local SQLite index for wiki retrieval. It is already run by `apply-preview` and `archive` unless `--no-index` is used.
-
-### 7. Recall from the wiki with the host model
-
-Use this default flow for knowledge recall inside Claude Code, Codex, or OpenCode:
-
-1. run deterministic search:
+Answer from the wiki:
 
 ```bash
-.venv/bin/python skill/llm-wiki-generator/scripts/cli.py search "当前已知的业务约束是什么？" --scope stable-draft --as-json
+.venv/bin/python skill/llm-prd-generator/scripts/cli.py answer "当前已知的业务约束是什么？" --scope stable-draft
 ```
 
-2. use the current host model to answer from only the returned documents
-3. cite page titles from the search results
+## PRD Business-Question Loop
 
-Default scope is `stable`; use `stable-draft` when team history or exploratory notes should be included.
-
-### 8. Standalone CLI answer mode
-
-Run:
+Start every PRD with `prd-chat`:
 
 ```bash
-.venv/bin/python skill/llm-wiki-generator/scripts/cli.py answer "当前已知的业务约束是什么？"
+.venv/bin/python skill/llm-prd-generator/scripts/cli.py prd-chat "商家刷单识别系统"
 ```
 
-Default scope is `stable`. You can override it:
+The command:
+
+- loads or creates a PRD session for the topic
+- reads every Markdown file under `20-wiki/`
+- parses `tags`, `page_type`, `status`, `source_type`, `confidence`, links, and body text
+- scores relevance by tag overlap, title/body matches, page type, source type, and status
+- builds three context packs:
+  - `Evidence Pack`: `business_fact`; may support project facts
+  - `Template Guidance`: `industry_practice` and `prd_pattern`; may shape structure and questions
+  - `Team Style Pack`: `team_history` and `feedback`; may guide language, granularity, and review style
+- evaluates PRD completeness using BA-Agent-style dimensions
+- asks exactly one highest-priority business question if completeness is below 100%
+
+Answer the current question with:
 
 ```bash
-.venv/bin/python skill/llm-wiki-generator/scripts/cli.py answer "团队历史里提到的设计思路有哪些？" --scope stable-draft
+.venv/bin/python skill/llm-prd-generator/scripts/cli.py prd-chat "商家刷单识别系统" --answer "目标用户：风控运营、商家治理专员和风控策略负责人。"
 ```
 
-## Source Boundary Rules
+After each answer, the skill updates the structured PRD state, re-reads the wiki, re-runs retrieval, and re-calculates completeness.
 
-- `business_fact`: can become factual business knowledge if evidence is strong and there is no conflict
-- `industry_practice`: can become `source`, `synthesis`, or `prd_pattern`; it must not become customer fact
-- `team_history`: can become `source`, `concept`, `synthesis`, or `prd_pattern`; it always defaults to `draft`
+## PRD Completeness Gate
+
+The loop stops only when:
+
+- all PRD dimensions have values
+- traceable business evidence exists
+- all knowledge conflicts have been resolved by the business user
+- score is exactly `100%`
+
+Completeness dimensions:
+
+- business problem and goal
+- target users
+- stakeholders and decision authority
+- success metric
+- MVP scope
+- non-goals
+- user workflows and exception paths
+- business rules and permissions
+- data and integrations
+- non-functional requirements
+- risks and dependencies
+- acceptance criteria
+- rollout and feedback
+- traceable business evidence
+- unresolved knowledge conflicts
+
+Rules:
+
+- Ask one question per turn, never a bulk questionnaire.
+- Resolve knowledge conflicts before ordinary missing fields.
+- If business evidence is missing, ask for interview notes, policy, metrics, reports, or owner confirmation.
+- `prd-patterns/` pages may influence structure and questioning, but must not create business facts.
+- `team_history` is historical style/reference unless the business user confirms it still applies.
+
+## OpenSpec PRD Generation
+
+Only run after `prd-chat` reports 100% completeness:
+
+```bash
+.venv/bin/python skill/llm-prd-generator/scripts/cli.py propose-prd "商家刷单识别系统" --project-root /path/to/project --change-name add-fraud-detection-prd
+```
+
+Behavior:
+
+- below 100%: write nothing and return the next required business question
+- missing `openspec/config.yaml`: write nothing and tell the user to run `openspec init --tools codex --profile core`
+- ready and initialized: write artifacts under `openspec/changes/<change-name>/`
+
+Generated artifacts:
+
+- `proposal.md`
+- `design.md`
+- `tasks.md`
+- `prd.md`
+- `specs/<capability>/spec.md`
+
+Every key requirement, metric, rule, and acceptance criterion must cite retrieved evidence.
+
+## Source Boundaries
+
+- `business_fact`: can become factual product knowledge if evidence is strong and there is no conflict
+- `industry_practice`: can become `source`, `synthesis`, or `prd_pattern`; never customer truth
+- `team_history`: can become `source`, `concept`, `synthesis`, or `prd_pattern`; defaults to `draft`
 - `feedback`: defaults to `draft`
-- conflicts never overwrite older knowledge; they become `20-wiki/conflicts/`
+- conflicts never overwrite older knowledge; they belong in `20-wiki/conflicts/`
 
 ## Environment
 
-For host-model skill usage, `.env` only needs wiki paths:
+Copy `.env.example` and set:
 
-- `WIKI_ROOT`
-- `WIKI_INDEX_DB`
-- `WIKI_SCOPE`
-
-For standalone OpenAI-compatible CLI mode, also set:
-
-- `LLM_PROVIDER`
 - `LLM_BASE_URL`
 - `LLM_API_KEY`
 - `LLM_MODEL`
+- `WIKI_ROOT`
+- `WIKI_INDEX_DB`
 
-The LLM endpoint must support the OpenAI chat-completions format.
+Host-model skill usage does not require model settings such as `LLM_API_KEY`; `.env` is still needed for wiki paths. Standalone CLI archive mode can use an OpenAI-compatible API configured in `.env`.
 
 ## Resources
 
 ### scripts/
 
-Python implementation for conversion, preview, archive, indexing, and answer flows.
+Python implementation for conversion, archive preview/application, indexing, search, answer, PRD questioning, completeness gating, and OpenSpec artifact generation.
 
 ### references/
 
-Prompt contracts, source-boundary rules, and vault layout notes for this skill.
+Prompt contracts, source-boundary rules, and vault layout notes.

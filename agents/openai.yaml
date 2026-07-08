@@ -1,4 +1,4 @@
 interface:
-  display_name: "LLM Wiki Generator"
-  short_description: "Archive and answer from an LLM Wiki vault"
-  default_prompt: "Use $llm-wiki-generator to archive knowledge into a wiki and answer from the stable knowledge base."
+  display_name: "LLM PRD Generator"
+  short_description: "Generate evidence-backed PRDs from wiki knowledge through a 100% completeness gate"
+  default_prompt: "Use $llm-prd-generator to archive product knowledge, ask business questions until PRD completeness reaches 100%, and generate OpenSpec PRD artifacts."

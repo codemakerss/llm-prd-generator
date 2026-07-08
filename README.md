@@ -1,231 +1,147 @@
-# LLM Wiki Generator
+# LLM PRD Generator
 
-An LLM-first document ingestion and retrieval workflow for building a structured, local, Obsidian-compatible LLM Wiki.
+LLM PRD Generator turns archived wiki knowledge into evidence-backed PRDs and OpenSpec change artifacts.
 
-LLM Wiki Generator turns raw source files into traceable wiki knowledge through a host-model pipeline: `convert -> host LLM -> apply-preview -> search -> host LLM answer`.
-When installed as a skill, Claude Code, Codex, or OpenCode uses its own model to understand documents, generate archive content, and answer questions. The Python CLI only handles deterministic operations: conversion, validation, import, indexing, and retrieval.
+It includes a host-model friendly wiki ingestion pipeline, but the main workflow is product-spec generation:
+
+```text
+archive knowledge -> read all wiki pages -> retrieve by tags/content -> ask business questions -> reach 100% PRD completeness -> generate OpenSpec artifacts
+```
 
 ## Why This Exists
 
-Most document-driven knowledge workflows break down in one of two ways:
+PRDs generated from a single prompt are usually incomplete. They either invent missing business facts or silently reuse stale historical assumptions.
 
-- raw files remain unstructured and difficult to reuse
-- LLM-based ingestion writes opaque knowledge that is hard to recall later
+This project takes a stricter path:
 
-This project takes a structured path.
+1. keep raw source files and structured wiki knowledge traceable
+2. retrieve business evidence, PRD patterns, and team history separately
+3. ask one business question at a time
+4. block PRD generation until completeness reaches 100%
+5. write OpenSpec artifacts only after evidence and conflicts are handled
 
-Instead of treating source files as a chat substrate, it treats them as inputs to an LLM-backed knowledge compiler:
+## Core Workflows
 
-1. convert source material into normalized text
-2. let the host LLM extract structured archive content
-3. let the CLI validate and import that content into a vault
-4. let the CLI build a retrieval index
-5. let the host LLM answer from retrieved wiki knowledge
+### Knowledge Archiving
 
-The goal is not just answering questions.
-The goal is building a knowledge base that can keep evolving and remain searchable.
-
-## Quick Navigation
-
-- [Docs Navigation](#docs-navigation)
-- [Workflow](#workflow)
-- [First-Time Path](#first-time-path)
-- [Quick Start](#quick-start)
-- [Example Commands](#example-commands)
-- [Vault Structure](#vault-structure)
-- [Source Types](#source-types-and-boundaries)
-
-## Docs Navigation
-
-- [Chinese Overview](docs/README.zh-home.md)
-- [Chinese Usage Guide](docs/README.zh-usage.md)
-- [English Usage Guide](docs/README.en-usage.md)
-- [Docs Index](docs/index.md)
-
-## Workflow
-
-```mermaid
-flowchart TD
-    A["Invoke Skill or CLI"] --> B{"Initialized?"}
-
-    B -- "No" --> C["Ask whether to initialize now"]
-    C --> D["Ask where the wiki vault should live"]
-    D --> E["Confirm the chosen path"]
-    E --> F["Run bootstrap-init"]
-    F --> G["Persist WIKI_ROOT and WIKI_INDEX_DB into .env"]
-    G --> H["Create vault directories and bootstrap files"]
-    H --> I["Ask whether to provide the first document now"]
-
-    B -- "Yes" --> J["Provide source document"]
-    I --> J
-
-    J --> K["convert --as-json"]
-    K --> L["Host LLM generates ArchivePreview JSON"]
-    L --> M["apply-preview validates and imports"]
-    M --> P["index"]
-    P --> Q["search --as-json"]
-    Q --> S["Host LLM answers from retrieved docs"]
-
-    J -. "Standalone API path" .-> R["archive"]
-```
-
-## First-Time Path
-
-For a first-time user, the shortest useful path is:
-
-1. install the skill or Python dependencies
-2. run `bootstrap-status`
-3. run `bootstrap-init` if the workspace is not initialized
-4. provide the first source document
-5. run `convert --as-json`
-6. let Claude Code, Codex, or OpenCode generate `ArchivePreview` JSON
-7. run `apply-preview` to import and index the generated archive content
-8. query with `search --as-json`, then let the host LLM answer from retrieved docs
-
-If you already know the desired vault location, you can still configure `.env` first and call `init` directly.
-Host-model skill usage does not require `.env` model settings such as `LLM_API_KEY`; `.env` is only needed for wiki paths. Standalone CLI archive mode can still use an OpenAI-compatible API configured in `.env`.
-
-## Properties
-
-- Supports `PDF`, `DOCX`, `PPTX`, `XLSX`, `TXT`, `MD`, and `Markdown`
-- Uses Claude Code, Codex, or OpenCode as the default archive/answer model when installed as a skill
-- Provides deterministic CLI tools for conversion, preview application, indexing, and search
-- Rebuilds the retrieval index by default after `apply-preview` or standalone `archive`
-- Writes into an Obsidian-compatible vault layout
-- Keeps raw sources and structured knowledge separate
-- Builds a local SQLite retrieval index
-- Supports stable and draft knowledge scopes
-- Provides bootstrap-style initialization for first-time setup
-- Persists chosen vault paths into `.env`
-
-## Responsibility Split
-
-Host LLM responsibilities:
-
-- understand converted Markdown
-- generate `ArchivePreview` JSON for wiki pages
-- summarize and answer from retrieved wiki documents
-
-CLI responsibilities:
-
-- convert files to Markdown
-- validate and enforce archive rules
-- copy raw files into `10-raw/`
-- write wiki pages into `20-wiki/`
-- build the SQLite index
-- retrieve local knowledge with `search`
-
-## Quick Start
-
-### Option A: Skill-first workflow
-
-If your host environment supports skill installation:
+Use this when adding source material to the vault.
 
 ```bash
-npx install skill llm-wiki-generator
+python scripts/cli.py convert path/to/file.pdf --as-json
 ```
 
-Check whether the workspace has already been initialized:
-
-```bash
-python scripts/cli.py bootstrap-status --as-json
-```
-
-If not initialized, create the vault at the chosen path:
-
-```bash
-python scripts/cli.py bootstrap-init path/to/wiki-vault
-```
-
-Once initialized, continue directly into document ingestion.
-
-### Option B: Manual CLI workflow
-
-Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-Create the environment file:
-
-```bash
-cp .env.example .env
-```
-
-Then either inspect bootstrap status:
-
-```bash
-python scripts/cli.py bootstrap-status --as-json
-```
-
-Or initialize directly if the vault path is already configured:
-
-```bash
-python scripts/cli.py init
-```
-
-## Example Commands
-
-Convert a file:
-
-```bash
-python scripts/cli.py convert path/to/file.pdf
-```
-
-Host-model archive flow:
-
-```bash
-python scripts/cli.py convert path/to/file.docx --as-json
-```
-
-Then Claude Code, Codex, or OpenCode generates `ArchivePreview` JSON from the converted Markdown.
-
-Apply and index that generated archive content:
+Then let Claude Code, Codex, or OpenCode generate `ArchivePreview` JSON from the converted Markdown and apply it:
 
 ```bash
 python scripts/cli.py apply-preview path/to/file.docx --preview-file /tmp/archive-preview.json
 ```
 
-Host-model recall flow:
-
-```bash
-python scripts/cli.py search "What business constraints are currently known?" --scope stable-draft --as-json
-```
-
-Standalone API archive mode, optional:
+Standalone API archive mode is also available:
 
 ```bash
 python scripts/cli.py archive path/to/file.docx --source-type team_history
 ```
 
-Standalone CLI answer mode, optional:
-
-```bash
-python scripts/cli.py answer "What business constraints are currently known?"
-```
-
-Build the retrieval index:
+Search and answer:
 
 ```bash
 python scripts/cli.py index
+python scripts/cli.py search "当前已知的业务约束是什么？" --scope stable-draft --as-json
+python scripts/cli.py answer "当前已知的业务约束是什么？" --scope stable-draft
 ```
 
-Search the wiki deterministically:
+Supported source types:
+
+- `business_fact`
+- `industry_practice`
+- `team_history`
+- `feedback`
+
+Supported file types:
+
+- `PDF`
+- `DOCX`
+- `PPTX`
+- `XLSX`
+- `TXT`
+- `MD`
+- `Markdown`
+
+### PRD Question Loop
+
+Start a PRD session:
 
 ```bash
-python scripts/cli.py search "What design ideas were mentioned in team history?" --scope stable-draft --as-json
+python scripts/cli.py prd-chat "商家刷单识别系统"
 ```
 
-Standalone CLI answer with draft knowledge:
+Answer the current business question:
 
 ```bash
-python scripts/cli.py answer "What design ideas were mentioned in team history?" --scope stable-draft
+python scripts/cli.py prd-chat "商家刷单识别系统" --answer "目标用户：风控运营、商家治理专员和风控策略负责人。"
 ```
+
+Each turn:
+
+- loads the saved session
+- reads every Markdown file under `20-wiki/`
+- ranks knowledge by tags, title, body, page type, source type, and status
+- builds `Evidence Pack`, `Template Guidance`, and `Team Style Pack`
+- evaluates PRD completeness
+- returns exactly one next question if the score is below 100%
+
+The loop stops only when every required PRD dimension is complete, business evidence exists, and all knowledge conflicts are resolved.
+
+### OpenSpec Generation
+
+Generate artifacts after the PRD gate reaches 100%:
+
+```bash
+python scripts/cli.py propose-prd "商家刷单识别系统" \
+  --project-root /path/to/project \
+  --change-name add-fraud-detection-prd
+```
+
+If the target project is not initialized for OpenSpec, the command writes nothing and asks you to run:
+
+```bash
+openspec init --tools codex --profile core
+```
+
+Generated files:
+
+```text
+openspec/changes/<change-name>/
+  proposal.md
+  design.md
+  tasks.md
+  prd.md
+  specs/<capability>/spec.md
+```
+
+## PRD Completeness Gate
+
+The gate follows BA-Agent-style completeness dimensions:
+
+- business problem and goal
+- target users
+- stakeholders and decision authority
+- success metric
+- MVP scope
+- non-goals
+- user workflows and exception paths
+- business rules and permissions
+- data and integrations
+- non-functional requirements
+- risks and dependencies
+- acceptance criteria
+- rollout and feedback
+- traceable business evidence
+- unresolved knowledge conflicts
+
+Generation is blocked until the score is `100%`.
 
 ## Vault Structure
-
-A typical initialized workspace looks like this:
 
 ```text
 10-raw/
@@ -247,56 +163,41 @@ A typical initialized workspace looks like this:
 index.sqlite3
 ```
 
-## Source Types and Boundaries
+## Source Boundaries
 
-Supported `source_type` values:
+- `business_fact`: may support factual requirements when evidence is strong
+- `industry_practice`: may guide patterns and structure, but not project facts
+- `team_history`: may guide style and precedent, but remains draft unless confirmed
+- `feedback`: draft signal by default
+- `conflicts`: must be resolved by the business user before generation
 
-- `business_fact`
-- `industry_practice`
-- `team_history`
-- `feedback`
+## Quick Start
 
-Behavior rules:
+Install dependencies:
 
-- `business_fact` may become stable business knowledge when evidence is strong
-- `industry_practice` may become patterns or synthesis, but not customer truth
-- `team_history` may also produce PRD patterns from historical PRDs and team decisions, but remains `draft`
-- `feedback` defaults to `draft`
-- conflicts never overwrite older knowledge; they go into `20-wiki/conflicts/`
+```bash
+pip install -r requirements.txt
+```
 
-## Design Intent
+Create `.env`:
 
-This repository prefers explicit state transitions over opaque ingestion.
+```bash
+cp .env.example .env
+```
 
-Key design choices:
+Initialize or inspect the vault:
 
-- host-model archive and answer by default when used as a skill
-- deterministic archive application
-- persistent raw source capture
-- local retrieval over archived markdown
-- standalone OpenAI-compatible API mode remains available for CLI-only usage
+```bash
+python scripts/cli.py bootstrap-status --as-json
+python scripts/cli.py bootstrap-init path/to/wiki-vault
+```
 
-The result is closer to a small knowledge compiler than a chat wrapper around files.
+## Skill Install Name
 
-## Who This Is For
+Use the skill as:
 
-- developers building agent-oriented knowledge workflows
-- teams that need local, inspectable, versionable knowledge artifacts
-- users who want a stricter alternative to direct document chat
-- individuals maintaining a structured personal wiki knowledge base
+```text
+$llm-prd-generator
+```
 
-## Tech Stack
-
-- Python
-- Typer
-- Rich
-- Pydantic
-- SQLite FTS
-- host-model skill mode plus optional OpenAI-compatible API mode
-- document parsers for DOCX, PPTX, XLSX, and PDF
-
-Note: MarkItDown is not integrated. Markdown files are supported natively by reading `.md` and `.markdown` content as-is.
-
-## Learn More
-
-Detailed usage guides live in [`docs/`](docs/).
+The implementation package is still named `llm_wiki_generator` internally for compatibility with the existing archive/index code.

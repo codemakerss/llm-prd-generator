@@ -1,2 +1,1 @@
-"""Standalone LLM Wiki Generator."""
-
+"""Standalone LLM PRD Generator internals."""

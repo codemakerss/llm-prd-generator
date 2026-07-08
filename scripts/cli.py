@@ -16,10 +16,11 @@ from llm_wiki_generator.config import load_settings
 from llm_wiki_generator.indexer import build_index, search_index
 from llm_wiki_generator.markdown import convert_to_markdown
 from llm_wiki_generator.models import ArchivePreview, Scope, SourceType
+from llm_wiki_generator.prd_workflow import generate_openspec_change, prd_chat_turn
 from llm_wiki_generator.vault import init_vault
 
 
-app = typer.Typer(help="Standalone LLM Wiki Generator")
+app = typer.Typer(help="Standalone LLM PRD Generator")
 console = Console()
 
 
@@ -256,6 +257,71 @@ def answer(question: str, scope: Optional[str] = None, limit: int = 5) -> None:
     resolved_scope = parse_scope(scope or settings.default_scope)
     response = answer_question(settings, question, resolved_scope, limit=limit)
     console.print(Panel.fit(response, title="Wiki Answer"))
+
+
+@app.command("prd-chat")
+def prd_chat(
+    topic: str,
+    answer: str = typer.Option("", "--answer", "-a"),
+    limit: int = 5,
+    as_json: bool = False,
+) -> None:
+    settings = load_settings()
+    payload = prd_chat_turn(settings, topic, answer=answer, limit=limit)
+    if as_json:
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+        return
+
+    quality = payload["quality"]
+    console.print(
+        Panel.fit(
+            "\n".join(
+                [
+                    f"Topic: {topic}",
+                    f"Completeness: {quality['score']}%",
+                    f"Ready: {payload['ready']}",
+                    f"Blockers: {', '.join(quality['blockers']) or '(none)'}",
+                ]
+            ),
+            title="PRD Quality Gate",
+        )
+    )
+    if payload["next_question"]:
+        question = payload["next_question"]
+        console.print(Panel.fit(question["question"], title=f"Next Question: {question['key']}"))
+        console.print(f"[dim]{question['reason']}[/dim]")
+    else:
+        console.print("[green]PRD completeness reached 100%. You can generate OpenSpec artifacts.[/green]")
+
+
+@app.command("propose-prd")
+def propose_prd(
+    topic: str,
+    project_root: Path = typer.Option(..., "--project-root"),
+    change_name: str = typer.Option(..., "--change-name"),
+    capability: Optional[str] = typer.Option(None, "--capability"),
+    limit: int = 5,
+    as_json: bool = False,
+) -> None:
+    settings = load_settings()
+    payload = generate_openspec_change(
+        settings,
+        topic,
+        project_root=project_root,
+        change_name=change_name,
+        capability=capability,
+        limit=limit,
+    )
+    if as_json:
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+        return
+
+    console.print(Panel.fit(payload["message"], title="OpenSpec PRD"))
+    if payload["next_question"]:
+        question = payload["next_question"]
+        console.print(Panel.fit(question["question"], title=f"Next Question: {question['key']}"))
+    for path in payload["written"]:
+        console.print(f"[green]written[/green] {path}")
 
 
 if __name__ == "__main__":
