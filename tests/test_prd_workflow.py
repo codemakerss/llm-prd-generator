@@ -1,7 +1,9 @@
+from datetime import datetime
 from pathlib import Path
 
 from llm_wiki_generator.config import Settings
 from llm_wiki_generator.prd_workflow import (
+    default_change_name,
     generate_openspec_change,
     prd_chat_turn,
     read_all_wiki_knowledge,
@@ -183,6 +185,42 @@ def test_prd_generation_writes_openspec_after_100_percent(tmp_path: Path) -> Non
     assert prd.exists()
     assert spec.exists()
     assert "设备指纹技术" in prd.read_text(encoding="utf-8")
+
+
+def test_default_change_name_uses_chinese_topic_and_mm_dd() -> None:
+    assert default_change_name("商家刷单识别系统", now=datetime(2026, 8, 9)) == "商家刷单识别系统-08-09"
+
+
+def test_prd_generation_defaults_to_chinese_change_and_capability(tmp_path: Path) -> None:
+    topic = "商家刷单识别系统"
+    settings = make_settings(tmp_path)
+    write_wiki_page(
+        settings,
+        "20-wiki/concepts/设备指纹技术.md",
+        title="设备指纹技术",
+        page_type="concept",
+        status="stable",
+        source_type="business_fact",
+        tags=["设备指纹", "风控", "刷单"],
+        body="设备指纹用于识别同源设备和黑灰产聚集风险。",
+    )
+    prd_chat_turn(settings, topic, answer=complete_answer())
+    project_root = tmp_path / "project"
+    (project_root / "openspec").mkdir(parents=True)
+    (project_root / "openspec/config.yaml").write_text("project: demo\n", encoding="utf-8")
+
+    result = generate_openspec_change(
+        settings,
+        topic,
+        project_root,
+    )
+
+    expected_change_name = default_change_name(topic)
+    assert result["ready"] is True
+    assert (project_root / f"openspec/changes/{expected_change_name}/prd.md").exists()
+    assert (
+        project_root / f"openspec/changes/{expected_change_name}/specs/商家刷单识别系统/spec.md"
+    ).exists()
 
 
 def test_uninitialized_openspec_does_not_write(tmp_path: Path) -> None:

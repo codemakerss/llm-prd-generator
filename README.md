@@ -98,8 +98,7 @@ Generate artifacts after the PRD gate reaches 100%:
 
 ```bash
 python scripts/cli.py propose-prd "商家刷单识别系统" \
-  --project-root /path/to/project \
-  --change-name add-fraud-detection-prd
+  --project-root /path/to/project
 ```
 
 If the target project is not initialized for OpenSpec, the command writes nothing and asks you to run:
@@ -111,13 +110,16 @@ openspec init --tools codex --profile core
 Generated files:
 
 ```text
-openspec/changes/<change-name>/
+openspec/changes/商家刷单识别系统-MM-DD/
   proposal.md
   design.md
   tasks.md
   prd.md
-  specs/<capability>/spec.md
+  specs/商家刷单识别系统/spec.md
 ```
+
+Use `--change-name` to override the default directory name, for example
+`--change-name 商家刷单识别系统-08-09`.
 
 ## PRD Completeness Gate
 

@@ -298,7 +298,7 @@ def prd_chat(
 def propose_prd(
     topic: str,
     project_root: Path = typer.Option(..., "--project-root"),
-    change_name: str = typer.Option(..., "--change-name"),
+    change_name: Optional[str] = typer.Option(None, "--change-name"),
     capability: Optional[str] = typer.Option(None, "--capability"),
     limit: int = 5,
     as_json: bool = False,

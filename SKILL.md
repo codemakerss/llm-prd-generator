@@ -174,8 +174,10 @@ Rules:
 Only run after `prd-chat` reports 100% completeness:
 
 ```bash
-.venv/bin/python skill/llm-prd-generator/scripts/cli.py propose-prd "商家刷单识别系统" --project-root /path/to/project --change-name add-fraud-detection-prd
+.venv/bin/python skill/llm-prd-generator/scripts/cli.py propose-prd "商家刷单识别系统" --project-root /path/to/project
 ```
+
+If `--change-name` is omitted, the default change directory is `<topic>-MM-DD`, for example `商家刷单识别系统-08-09`. If `--capability` is omitted, the default capability directory is the topic, for example `specs/商家刷单识别系统/spec.md`.
 
 Behavior:
 

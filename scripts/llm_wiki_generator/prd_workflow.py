@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -366,11 +367,16 @@ def ensure_openspec_initialized(project_root: Path) -> tuple[bool, str]:
     return True, ""
 
 
+def default_change_name(topic: str, now: datetime | None = None) -> str:
+    resolved_now = now or datetime.now()
+    return f"{topic}-{resolved_now:%m-%d}"
+
+
 def generate_openspec_change(
     settings: Settings,
     topic: str,
     project_root: Path,
-    change_name: str,
+    change_name: str | None = None,
     capability: str | None = None,
     limit: int = 5,
 ) -> dict[str, Any]:
@@ -395,7 +401,8 @@ def generate_openspec_change(
         }
 
     capability_name = slugify(capability or topic)
-    change_root = project_root / "openspec" / "changes" / slugify(change_name)
+    resolved_change_name = change_name or default_change_name(topic)
+    change_root = project_root / "openspec" / "changes" / slugify(resolved_change_name)
     spec_dir = change_root / "specs" / capability_name
     files = {
         change_root / "proposal.md": render_proposal(topic, turn["extracted"], turn["context"]),
