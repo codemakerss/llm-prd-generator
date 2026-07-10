@@ -108,6 +108,17 @@ PRD_DIMENSIONS = (
 )
 
 
+PATTERN_DIMENSION_KEYWORDS = {
+    "success_metric": ["指标", "度量", "成功", "误杀", "漏放", "召回", "准确"],
+    "business_rules": ["规则", "权限", "处罚", "复核", "审批", "状态", "分级"],
+    "user_workflows": ["流程", "路径", "申诉", "复核", "人工", "异常"],
+    "acceptance_criteria": ["验收", "场景", "成功", "失败", "边界"],
+    "rollout_plan": ["上线", "灰度", "监控", "回滚", "反馈"],
+    "risks_dependencies": ["风险", "依赖", "误杀", "绕过", "延迟"],
+    "non_functional_requirements": ["性能", "安全", "隐私", "审计", "可用"],
+}
+
+
 class PrdQualityGate:
     def evaluate(
         self,
@@ -169,6 +180,7 @@ class PrdQualityGate:
         self,
         quality: dict[str, Any],
         extracted: dict[str, Any],
+        context: dict[str, Any] | None = None,
     ) -> dict[str, str] | None:
         if quality["conflicts"] and not extracted.get("conflict_resolution"):
             return {
@@ -179,7 +191,19 @@ class PrdQualityGate:
                 "reason": "冲突必须由业务负责人确认，不能由模型自行选择。",
             }
         if quality["missing"]:
-            item = sorted(quality["missing"], key=lambda value: value["weight"], reverse=True)[0]
+            for item in quality["missing"]:
+                if item["key"] == "goal":
+                    return {
+                        "key": item["key"],
+                        "question": item["question"],
+                        "reason": item["reason"],
+                    }
+            boosts = self._pattern_boosts(context or {})
+            item = sorted(
+                quality["missing"],
+                key=lambda value: (value["weight"] + boosts.get(value["key"], 0.0), value["weight"]),
+                reverse=True,
+            )[0]
             return {
                 "key": item["key"],
                 "question": item["question"],
@@ -200,3 +224,23 @@ class PrdQualityGate:
         if isinstance(value, (list, tuple, set, dict)):
             return bool(value)
         return value is not None
+
+    @staticmethod
+    def _pattern_boosts(context: dict[str, Any]) -> dict[str, float]:
+        boosts: dict[str, float] = {}
+        for item in context.get("template_guidance", []):
+            if item.get("page_type") != "prd_pattern":
+                continue
+            status_weight = 1.0 if item.get("status") == "stable" else 0.5
+            guidance_weight = float(item.get("guidance_weight", status_weight) or status_weight)
+            text = " ".join(
+                [
+                    str(item.get("title", "")),
+                    str(item.get("excerpt", "")),
+                    " ".join(str(tag) for tag in item.get("tags", [])),
+                ]
+            )
+            for key, keywords in PATTERN_DIMENSION_KEYWORDS.items():
+                if any(keyword in text for keyword in keywords):
+                    boosts[key] = boosts.get(key, 0.0) + guidance_weight * 3
+        return boosts

@@ -40,7 +40,7 @@ def required_relative_paths() -> list[str]:
 
 
 def derive_index_db_path(wiki_root: Path) -> Path:
-    return wiki_root.parent / "index.sqlite3"
+    return wiki_root / "index.sqlite3"
 
 
 def normalize_wiki_root(skill_root: Path, raw_path: Union[str, Path]) -> Path:

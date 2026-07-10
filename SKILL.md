@@ -31,6 +31,7 @@ If `initialized=false`, ask whether to initialize, ask for the wiki vault path, 
 ```
 
 This writes `WIKI_ROOT` and `WIKI_INDEX_DB` into `.env` and creates the vault structure.
+By default, `WIKI_INDEX_DB` is stored inside `WIKI_ROOT` as `index.sqlite3`.
 
 ## Supported Source Files
 
@@ -121,7 +122,7 @@ The command:
 - scores relevance by tag overlap, title/body matches, page type, source type, and status
 - builds three context packs:
   - `Evidence Pack`: `business_fact`; may support project facts
-  - `Template Guidance`: `industry_practice` and `prd_pattern`; may shape structure and questions
+  - `Template Guidance`: `industry_practice` and `prd_pattern`; may shape structure and questions. Stable patterns are strong guidance; draft patterns are weak guidance and require business confirmation.
   - `Team Style Pack`: `team_history` and `feedback`; may guide language, granularity, and review style
 - evaluates PRD completeness using BA-Agent-style dimensions
 - asks exactly one highest-priority business question if completeness is below 100%
@@ -174,8 +175,17 @@ Rules:
 Only run after `prd-chat` reports 100% completeness:
 
 ```bash
-.venv/bin/python skill/llm-prd-generator/scripts/cli.py propose-prd "商家刷单识别系统" --project-root /path/to/project
+.venv/bin/python skill/llm-prd-generator/scripts/cli.py propose-prd "商家刷单识别系统"
 ```
+
+By default, `propose-prd` uses `WIKI_ROOT` as the OpenSpec project root. Initialize OpenSpec in the wiki root first:
+
+```bash
+cd <WIKI_ROOT>
+openspec init --tools codex --profile core
+```
+
+Use `--project-root` only when you intentionally want the artifacts written to a separate OpenSpec project.
 
 If `--change-name` is omitted, the default change directory is `<topic>-MM-DD`, for example `商家刷单识别系统-08-09`. If `--capability` is omitted, the default capability directory is the topic, for example `specs/商家刷单识别系统/spec.md`.
 
@@ -195,12 +205,34 @@ Generated artifacts:
 
 Every key requirement, metric, rule, and acceptance criterion must cite retrieved evidence.
 
+By default, successful generation automatically learns or updates a reusable PRD Pattern from the final `prd.md`, session answers, evidence, existing patterns, and related wiki pages. The pattern is written to:
+
+```text
+<WIKI_ROOT>/20-wiki/prd-patterns/<领域>-PRD-Pattern.md
+```
+
+Use `--no-learn-pattern` to disable this behavior for a specific generation.
+
+To re-learn from an existing generated PRD, run:
+
+```bash
+.venv/bin/python skill/llm-prd-generator/scripts/cli.py learn-prd-pattern "商家刷单识别系统"
+```
+
+Pattern stability is automatic:
+
+- `stable`: score is high, multiple sources support the structure, and no conflicts are found
+- `draft`: useful but not sufficiently proven
+
+Draft patterns still participate in future PRD generation, but only as structure/question hints. They must never fill business facts, rules, or metric values.
+
 ## Source Boundaries
 
 - `business_fact`: can become factual product knowledge if evidence is strong and there is no conflict
 - `industry_practice`: can become `source`, `synthesis`, or `prd_pattern`; never customer truth
 - `team_history`: can become `source`, `concept`, `synthesis`, or `prd_pattern`; defaults to `draft`
 - `feedback`: defaults to `draft`
+- `generated_prd_pattern`: learned reusable PRD structure; may be draft or stable based on automatic stability scoring
 - conflicts never overwrite older knowledge; they belong in `20-wiki/conflicts/`
 
 ## Environment

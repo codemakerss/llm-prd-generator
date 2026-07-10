@@ -16,7 +16,9 @@ from llm_wiki_generator.config import load_settings
 from llm_wiki_generator.indexer import build_index, search_index
 from llm_wiki_generator.markdown import convert_to_markdown
 from llm_wiki_generator.models import ArchivePreview, Scope, SourceType
-from llm_wiki_generator.prd_workflow import generate_openspec_change, prd_chat_turn
+from llm_wiki_generator.prd_pattern import learn_prd_pattern_from_payload
+from llm_wiki_generator.prd_workflow import default_change_name, generate_openspec_change, prd_chat_turn
+from llm_wiki_generator.utils import slugify
 from llm_wiki_generator.vault import init_vault
 
 
@@ -297,20 +299,23 @@ def prd_chat(
 @app.command("propose-prd")
 def propose_prd(
     topic: str,
-    project_root: Path = typer.Option(..., "--project-root"),
+    project_root: Optional[Path] = typer.Option(None, "--project-root"),
     change_name: Optional[str] = typer.Option(None, "--change-name"),
     capability: Optional[str] = typer.Option(None, "--capability"),
     limit: int = 5,
+    learn_pattern: bool = typer.Option(True, "--learn-pattern/--no-learn-pattern"),
     as_json: bool = False,
 ) -> None:
     settings = load_settings()
+    resolved_project_root = project_root or settings.wiki_root
     payload = generate_openspec_change(
         settings,
         topic,
-        project_root=project_root,
+        project_root=resolved_project_root,
         change_name=change_name,
         capability=capability,
         limit=limit,
+        learn_pattern=learn_pattern,
     )
     if as_json:
         console.print_json(json.dumps(payload, ensure_ascii=False))
@@ -322,6 +327,38 @@ def propose_prd(
         console.print(Panel.fit(question["question"], title=f"Next Question: {question['key']}"))
     for path in payload["written"]:
         console.print(f"[green]written[/green] {path}")
+    if payload.get("pattern") and payload["pattern"].get("learned"):
+        console.print(f"[green]pattern[/green] {payload['pattern']['written']}")
+
+
+@app.command("learn-prd-pattern")
+def learn_prd_pattern(
+    topic: str,
+    project_root: Optional[Path] = typer.Option(None, "--project-root"),
+    change_name: Optional[str] = typer.Option(None, "--change-name"),
+    limit: int = 5,
+    as_json: bool = False,
+) -> None:
+    settings = load_settings()
+    resolved_project_root = project_root or settings.wiki_root
+    resolved_change_name = change_name or default_change_name(topic)
+    prd_path = resolved_project_root / "openspec" / "changes" / slugify(resolved_change_name) / "prd.md"
+    turn = prd_chat_turn(settings, topic, limit=limit)
+    payload = learn_prd_pattern_from_payload(
+        settings=settings,
+        topic=topic,
+        prd_path=prd_path,
+        change_name=slugify(resolved_change_name),
+        context=turn["context"],
+        update_index=True,
+    )
+    if as_json:
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+        return
+
+    console.print(Panel.fit(payload["message"], title="PRD Pattern Learning"))
+    if payload.get("written"):
+        console.print(f"[green]pattern[/green] {payload['written']}")
 
 
 if __name__ == "__main__":

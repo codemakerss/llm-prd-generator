@@ -87,6 +87,7 @@ Each turn:
 - reads every Markdown file under `20-wiki/`
 - ranks knowledge by tags, title, body, page type, source type, and status
 - builds `Evidence Pack`, `Template Guidance`, and `Team Style Pack`
+- uses stable PRD patterns as strong structure guidance and draft PRD patterns as weaker question/coverage hints
 - evaluates PRD completeness
 - returns exactly one next question if the score is below 100%
 
@@ -97,20 +98,24 @@ The loop stops only when every required PRD dimension is complete, business evid
 Generate artifacts after the PRD gate reaches 100%:
 
 ```bash
-python scripts/cli.py propose-prd "商家刷单识别系统" \
-  --project-root /path/to/project
+python scripts/cli.py propose-prd "商家刷单识别系统"
 ```
 
-If the target project is not initialized for OpenSpec, the command writes nothing and asks you to run:
+By default, artifacts are written under `WIKI_ROOT/openspec/changes/`. This keeps raw sources, wiki knowledge, and generated PRDs in the same knowledge workspace.
+
+Initialize OpenSpec in the wiki root before generation:
 
 ```bash
+cd <WIKI_ROOT>
 openspec init --tools codex --profile core
 ```
+
+Use `--project-root` only when you intentionally want to write artifacts to another OpenSpec project.
 
 Generated files:
 
 ```text
-openspec/changes/商家刷单识别系统-MM-DD/
+<WIKI_ROOT>/openspec/changes/商家刷单识别系统-MM-DD/
   proposal.md
   design.md
   tasks.md
@@ -120,6 +125,31 @@ openspec/changes/商家刷单识别系统-MM-DD/
 
 Use `--change-name` to override the default directory name, for example
 `--change-name 商家刷单识别系统-08-09`.
+
+By default, successful generation also learns a reusable PRD Pattern from the final `prd.md`, session answers, retrieved evidence, existing patterns, and related wiki pages. The learned pattern is written to:
+
+```text
+<WIKI_ROOT>/20-wiki/prd-patterns/<领域>-PRD-Pattern.md
+```
+
+Disable automatic learning when needed:
+
+```bash
+python scripts/cli.py propose-prd "商家刷单识别系统" --no-learn-pattern
+```
+
+Re-learn from an existing generated PRD:
+
+```bash
+python scripts/cli.py learn-prd-pattern "商家刷单识别系统"
+```
+
+Pattern stability is automatic:
+
+- `stable`: enough supporting sources, no conflicts, reusable structure only
+- `draft`: useful but not sufficiently proven
+
+Draft patterns still participate in future PRD generation, but only as weak structure/question guidance. They never fill business facts or metric values.
 
 ## PRD Completeness Gate
 
@@ -165,12 +195,15 @@ Generation is blocked until the score is `100%`.
 index.sqlite3
 ```
 
+`index.sqlite3` lives inside `WIKI_ROOT` by default, so the raw sources, wiki pages, OpenSpec PRDs, learned PRD patterns, and retrieval index move together as one knowledge workspace.
+
 ## Source Boundaries
 
 - `business_fact`: may support factual requirements when evidence is strong
 - `industry_practice`: may guide patterns and structure, but not project facts
 - `team_history`: may guide style and precedent, but remains draft unless confirmed
 - `feedback`: draft signal by default
+- `generated_prd_pattern`: learned reusable PRD structure; may be draft or stable based on automatic stability scoring
 - `conflicts`: must be resolved by the business user before generation
 
 ## Quick Start

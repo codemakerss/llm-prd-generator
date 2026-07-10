@@ -63,5 +63,5 @@ def test_bootstrap_status_is_initialized_after_bootstrap_init(tmp_path: Path) ->
     assert status.configured
     assert status.initialized
     assert status.wiki_root == (tmp_path / "vault").resolve()
-    assert status.index_db == (tmp_path / "index.sqlite3").resolve()
+    assert status.index_db == (tmp_path / "vault" / "index.sqlite3").resolve()
     assert status.missing_paths == []

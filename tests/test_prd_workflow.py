@@ -1,6 +1,9 @@
 from datetime import datetime
 from pathlib import Path
 
+from typer.testing import CliRunner
+
+import cli as cli_module
 from llm_wiki_generator.config import Settings
 from llm_wiki_generator.prd_workflow import (
     default_change_name,
@@ -8,6 +11,7 @@ from llm_wiki_generator.prd_workflow import (
     prd_chat_turn,
     read_all_wiki_knowledge,
 )
+from llm_wiki_generator.utils import load_frontmatter
 
 
 def make_settings(tmp_path: Path) -> Settings:
@@ -113,6 +117,29 @@ def test_prd_chat_reads_all_wiki_and_asks_one_question(tmp_path: Path) -> None:
     assert turn["next_question"]["key"] == "goal"
     assert len(turn["context"]["evidence_pack"]) == 1
     assert len(turn["context"]["template_guidance"]) == 1
+
+
+def test_stable_prd_pattern_boosts_next_question_priority(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path)
+    write_wiki_page(
+        settings,
+        "20-wiki/prd-patterns/风控类-PRD-Pattern.md",
+        title="风控类 PRD Pattern",
+        page_type="prd_pattern",
+        status="stable",
+        source_type="generated_prd_pattern",
+        tags=["PRD", "风控", "灰度", "回滚"],
+        body="风控 PRD 应优先确认灰度、监控、回滚和反馈闭环。",
+    )
+
+    turn = prd_chat_turn(
+        settings,
+        "商家刷单识别系统",
+        answer="业务问题与目标: 识别商家刷单团伙，降低虚假交易影响。",
+    )
+
+    assert turn["next_question"]["key"] == "rollout_plan"
+    assert turn["context"]["template_guidance"][0]["guidance_weight"] == 1.0
 
 
 def test_prd_generation_is_blocked_before_100_percent(tmp_path: Path) -> None:
@@ -221,6 +248,52 @@ def test_prd_generation_defaults_to_chinese_change_and_capability(tmp_path: Path
     assert (
         project_root / f"openspec/changes/{expected_change_name}/specs/商家刷单识别系统/spec.md"
     ).exists()
+    pattern_path = settings.wiki_root / "20-wiki/prd-patterns/风控类-PRD-Pattern.md"
+    frontmatter, body = load_frontmatter(pattern_path.read_text(encoding="utf-8"))
+    assert frontmatter["page_type"] == "prd_pattern"
+    assert frontmatter["source_type"] == "generated_prd_pattern"
+    assert frontmatter["status"] == "draft"
+    assert "90%" not in "\n".join(frontmatter.get("reusable_questions", []))
+    assert "误杀成本" in body
+
+
+def test_pattern_learning_auto_stable_with_multiple_sources(tmp_path: Path) -> None:
+    topic = "商家刷单识别系统"
+    settings = make_settings(tmp_path)
+    write_wiki_page(
+        settings,
+        "20-wiki/concepts/设备指纹技术.md",
+        title="设备指纹技术",
+        page_type="concept",
+        status="stable",
+        source_type="business_fact",
+        tags=["设备指纹", "风控", "刷单"],
+        body="设备指纹用于识别同源设备和黑灰产聚集风险。",
+    )
+    write_wiki_page(
+        settings,
+        "20-wiki/prd-patterns/风控类-PRD-Pattern.md",
+        title="风控类 PRD Pattern",
+        page_type="prd_pattern",
+        status="stable",
+        source_type="industry_practice",
+        tags=["PRD", "风控"],
+        body="风控 PRD 应覆盖误杀、复核、灰度、回滚和审计。",
+    )
+    prd_chat_turn(settings, topic, answer=complete_answer())
+    project_root = tmp_path / "project"
+    (project_root / "openspec").mkdir(parents=True)
+    (project_root / "openspec/config.yaml").write_text("project: demo\n", encoding="utf-8")
+
+    result = generate_openspec_change(settings, topic, project_root)
+
+    pattern = result["pattern"]
+    assert pattern["learned"] is True
+    assert pattern["candidate"]["status"] == "stable"
+    assert pattern["candidate"]["stability_score"] >= 0.85
+    frontmatter, _ = load_frontmatter(Path(pattern["written"]).read_text(encoding="utf-8"))
+    assert frontmatter["status"] == "stable"
+    assert len(frontmatter["supporting_sources"]) >= 2
 
 
 def test_uninitialized_openspec_does_not_write(tmp_path: Path) -> None:
@@ -248,3 +321,58 @@ def test_uninitialized_openspec_does_not_write(tmp_path: Path) -> None:
     assert result["ready"] is True
     assert result["written"] == []
     assert "openspec init" in result["message"]
+    assert str(project_root) in result["message"]
+
+
+def test_propose_prd_cli_defaults_project_root_to_wiki_root(monkeypatch, tmp_path: Path) -> None:
+    topic = "商家刷单识别系统"
+    settings = make_settings(tmp_path)
+    write_wiki_page(
+        settings,
+        "20-wiki/concepts/设备指纹技术.md",
+        title="设备指纹技术",
+        page_type="concept",
+        status="stable",
+        source_type="business_fact",
+        tags=["设备指纹", "风控", "刷单"],
+        body="设备指纹用于识别同源设备和黑灰产聚集风险。",
+    )
+    prd_chat_turn(settings, topic, answer=complete_answer())
+    (settings.wiki_root / "openspec").mkdir(parents=True)
+    (settings.wiki_root / "openspec/config.yaml").write_text("project: wiki\n", encoding="utf-8")
+    monkeypatch.setattr(cli_module, "load_settings", lambda: settings)
+
+    result = CliRunner().invoke(cli_module.app, ["propose-prd", topic, "--as-json"])
+
+    expected_change_name = default_change_name(topic)
+    assert result.exit_code == 0, result.output
+    assert (settings.wiki_root / f"openspec/changes/{expected_change_name}/prd.md").exists()
+    assert (
+        settings.wiki_root / f"openspec/changes/{expected_change_name}/specs/商家刷单识别系统/spec.md"
+    ).exists()
+
+
+def test_learn_prd_pattern_cli_relearns_from_existing_prd(monkeypatch, tmp_path: Path) -> None:
+    topic = "商家刷单识别系统"
+    settings = make_settings(tmp_path)
+    write_wiki_page(
+        settings,
+        "20-wiki/concepts/设备指纹技术.md",
+        title="设备指纹技术",
+        page_type="concept",
+        status="stable",
+        source_type="business_fact",
+        tags=["设备指纹", "风控", "刷单"],
+        body="设备指纹用于识别同源设备和黑灰产聚集风险。",
+    )
+    prd_chat_turn(settings, topic, answer=complete_answer())
+    (settings.wiki_root / "openspec").mkdir(parents=True)
+    (settings.wiki_root / "openspec/config.yaml").write_text("project: wiki\n", encoding="utf-8")
+    monkeypatch.setattr(cli_module, "load_settings", lambda: settings)
+    generated = CliRunner().invoke(cli_module.app, ["propose-prd", topic, "--no-learn-pattern", "--as-json"])
+    assert generated.exit_code == 0, generated.output
+
+    result = CliRunner().invoke(cli_module.app, ["learn-prd-pattern", topic, "--as-json"])
+
+    assert result.exit_code == 0, result.output
+    assert (settings.wiki_root / "20-wiki/prd-patterns/风控类-PRD-Pattern.md").exists()

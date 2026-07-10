@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
+from .prd_pattern import learn_prd_pattern_from_payload
 from .prd_quality import PRD_DIMENSIONS, PrdQualityGate
 from .utils import ensure_parent, load_frontmatter, slugify, write_json
 
@@ -156,7 +157,7 @@ def score_item(item: WikiKnowledgeItem, query: str, extracted: dict[str, Any]) -
     if item.status == "stable":
         score += 2
     if item.page_type == "prd_pattern":
-        score += 3
+        score += 5 if item.status == "stable" else 2
     if item.page_type == "conflict":
         score += 8
     if item.source_type == "business_fact":
@@ -184,6 +185,14 @@ def build_context(topic: str, extracted: dict[str, Any], items: list[WikiKnowled
         for item in ranked
         if item.source_type == "industry_practice" or item.page_type == "prd_pattern"
     ][:limit]
+    template_payloads = []
+    for item in templates:
+        payload = item.to_payload()
+        if item.page_type == "prd_pattern":
+            payload["allowed_use"] = ["question_generation", "section_coverage", "acceptance_template"]
+            payload["forbidden_use"] = ["business_fact", "metric_value", "rule_decision"]
+            payload["guidance_weight"] = 1.0 if item.status == "stable" else 0.5
+        template_payloads.append(payload)
     team = [
         item
         for item in ranked
@@ -192,7 +201,7 @@ def build_context(topic: str, extracted: dict[str, Any], items: list[WikiKnowled
     conflicts = [item.title for item in ranked if item.page_type == "conflict" or item.status == "conflict"]
     return {
         "evidence_pack": [item.to_payload() for item in evidence],
-        "template_guidance": [item.to_payload() for item in templates],
+        "template_guidance": template_payloads,
         "team_style_pack": [item.to_payload() for item in team],
         "conflicts": conflicts,
         "all_ranked": [item.to_payload() for item in ranked[: limit * 3]],
@@ -236,7 +245,7 @@ def prd_chat_turn(
     context = build_context(topic, session.extracted, items, limit=limit)
     gate = PrdQualityGate()
     quality = gate.evaluate(session.extracted, context, context["conflicts"])
-    next_question = gate.next_question(quality, session.extracted)
+    next_question = gate.next_question(quality, session.extracted, context)
     session.last_question_key = next_question["key"] if next_question else ""
     save_session(settings, session)
     return {
@@ -363,7 +372,7 @@ def render_spec(topic: str, capability: str, extracted: dict[str, Any], context:
 def ensure_openspec_initialized(project_root: Path) -> tuple[bool, str]:
     openspec_root = project_root / "openspec"
     if not (openspec_root / "config.yaml").exists():
-        return False, "OpenSpec 未初始化。请先运行：openspec init --tools codex --profile core"
+        return False, f"OpenSpec 未初始化。请先在 {project_root} 运行：openspec init --tools codex --profile core"
     return True, ""
 
 
@@ -379,6 +388,7 @@ def generate_openspec_change(
     change_name: str | None = None,
     capability: str | None = None,
     limit: int = 5,
+    learn_pattern: bool = True,
 ) -> dict[str, Any]:
     turn = prd_chat_turn(settings, topic, limit=limit)
     if not turn["ready"]:
@@ -416,10 +426,21 @@ def generate_openspec_change(
         ensure_parent(path)
         path.write_text(content, encoding="utf-8")
         written.append(str(path))
+    pattern_result = None
+    if learn_pattern:
+        pattern_result = learn_prd_pattern_from_payload(
+            settings=settings,
+            topic=topic,
+            prd_path=change_root / "prd.md",
+            change_name=slugify(resolved_change_name),
+            context=turn["context"],
+            update_index=True,
+        )
     return {
         "written": written,
         "ready": True,
         "quality": turn["quality"],
         "next_question": None,
+        "pattern": pattern_result,
         "message": "OpenSpec artifacts generated.",
     }
