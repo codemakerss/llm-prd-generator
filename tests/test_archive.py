@@ -6,7 +6,7 @@ from typer.testing import CliRunner
 
 import cli as cli_module
 from llm_wiki_generator import archive as archive_module
-from llm_wiki_generator.archive import ArchiveLLMRequiredError, apply_preview, archive_source
+from llm_wiki_generator.archive import ArchiveLLMRequiredError, apply_preview, archive_receipt, archive_source
 from llm_wiki_generator.config import Settings
 from llm_wiki_generator.indexer import search_index
 from llm_wiki_generator.models import Scope
@@ -174,6 +174,37 @@ def test_archive_command_writes_and_reindexes(monkeypatch: pytest.MonkeyPatch, t
     assert (settings.wiki_root / "10-raw/business_fact/business.txt").exists()
     assert settings.index_db.exists()
     assert search_index(settings, "用户增长", Scope.STABLE, limit=3)
+
+
+def test_chinese_layout_archive_receipt_and_search(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    source = tmp_path / "历史需求.txt"
+    source.write_text("历史 PRD\n业务目标\n目标用户\n验收标准\n风险与上线\n", encoding="utf-8")
+    settings = make_settings(tmp_path)
+    settings.layout_language = "zh"
+    monkeypatch.setattr(archive_module, "OpenAICompatibleLLM", FakeLLM)
+
+    preview = archive_source(source, SourceType.TEAM_HISTORY, settings)
+    written = apply_preview(preview, source, settings)
+    indexed_count = cli_module.build_index(settings)
+    receipt = archive_receipt(preview, source, settings, written, indexed_count)
+
+    assert (settings.wiki_root / "10-原始资料/团队历史PRD/历史需求.txt").exists()
+    assert any((settings.wiki_root / "20-知识库/PRD模式") == path.parent for path in written)
+    assert receipt["raw_path"].endswith("10-原始资料/团队历史PRD/历史需求.txt")
+    assert receipt["pattern"]["learned"] is True
+    assert receipt["wiki_updates"][0]["evidence"]
+    assert search_index(settings, "历史 PRD", Scope.STABLE_DRAFT, limit=3)
+
+
+def test_team_history_without_model_pattern_extracts_reusable_pattern(tmp_path: Path) -> None:
+    payload = FakeLLM(make_settings(tmp_path)).complete_json("", "")
+    payload["updates"] = payload["updates"][:1]
+    preview = archive_module.enforce_rules(archive_module.ArchivePreview.model_validate(payload))
+
+    patterns = [item for item in preview.updates if item.page_type.value == "prd_pattern"]
+
+    assert len(patterns) == 1
+    assert patterns[0].status.value == "draft"
 
 
 def test_apply_preview_command_writes_host_generated_preview_without_llm(

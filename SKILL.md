@@ -24,14 +24,29 @@ Before archive, indexing, answer, or PRD work, check initialization:
 .venv/bin/python skill/llm-prd-generator/scripts/cli.py bootstrap-status --as-json
 ```
 
-If `initialized=false`, ask whether to initialize, ask for the wiki vault path, confirm it, then run:
+If `initialized=false`, do not silently choose defaults. Ask these questions in order, one at a time:
+
+1. Ask whether the user wants to initialize now. Stop if they decline.
+2. Ask whether Wiki folders should use Chinese (`zh`) or English (`en`) names.
+3. Ask for the local Wiki Root path.
+4. Show the selected language, normalized absolute path, and directory layout; ask for final confirmation.
+5. Run one of:
 
 ```bash
-.venv/bin/python skill/llm-prd-generator/scripts/cli.py bootstrap-init /absolute/or/relative/wiki-root
+.venv/bin/python skill/llm-prd-generator/scripts/cli.py bootstrap-init /absolute/or/relative/wiki-root --language zh
+.venv/bin/python skill/llm-prd-generator/scripts/cli.py bootstrap-init /absolute/or/relative/wiki-root --language en
 ```
 
-This writes `WIKI_ROOT` and `WIKI_INDEX_DB` into `.env` and creates the vault structure.
+This writes `WIKI_ROOT`, `WIKI_INDEX_DB`, and `WIKI_LAYOUT_LANGUAGE` into `.env` and creates the vault structure.
 By default, `WIKI_INDEX_DB` is stored inside `WIKI_ROOT` as `index.sqlite3`.
+
+The language is fixed for an initialized Wiki. Never rename or migrate an existing layout automatically. If both `20-wiki` and `20-知识库` exist, stop and report the conflict.
+
+Immediately after successful initialization, ask:
+
+> 是否有文档或知识需要导入？请提供文件或目录路径。
+
+Before importing, ask the user to classify the files as `business_fact`（业务知识）, `team_history`（团队历史 PRD）, `industry_practice`（业界 PRD）, or `feedback`（用户反馈）. Do not infer the category silently from a filename. A batch may share one category; ask per file when the user says it contains mixed sources.
 
 ## Supported Source Files
 
@@ -82,6 +97,10 @@ Standalone API archive mode is available when `.env` contains an OpenAI-compatib
 .venv/bin/python skill/llm-prd-generator/scripts/cli.py archive path/to/file.docx --source-type team_history
 ```
 
+After every import, report the input and source type, raw copy path, every created/updated wiki page with type/status/tags/summary/evidence, Pattern result and path, index location/count, and any skipped or failed files. Use `--as-json` when a structured receipt is needed.
+
+For `team_history` and `industry_practice`, preserve the normal source/concept/synthesis extraction and also extract a reusable PRD Pattern when the document contains reusable questions, section structure, acceptance approaches, review rules, or risk checks. Team-history patterns remain `draft`; industry patterns may be `stable` or `draft`. If no reusable method exists, explicitly report that no Pattern was found. Never manufacture an empty Pattern. `business_fact` must not produce a Pattern.
+
 Optional preview-only mode:
 
 ```bash
@@ -117,7 +136,7 @@ Start every PRD with `prd-chat`:
 The command:
 
 - loads or creates a PRD session for the topic
-- reads every Markdown file under `20-wiki/`
+- reads every Markdown file under the configured wiki directory (`20-wiki/` or `20-知识库/`)
 - parses `tags`, `page_type`, `status`, `source_type`, `confidence`, links, and body text
 - scores relevance by tag overlap, title/body matches, page type, source type, and status
 - builds three context packs:
@@ -167,7 +186,7 @@ Rules:
 - Ask one question per turn, never a bulk questionnaire.
 - Resolve knowledge conflicts before ordinary missing fields.
 - If business evidence is missing, ask for interview notes, policy, metrics, reports, or owner confirmation.
-- `prd-patterns/` pages may influence structure and questioning, but must not create business facts.
+- pages in the configured PRD Pattern directory may influence structure and questioning, but must not create business facts.
 - `team_history` is historical style/reference unless the business user confirms it still applies.
 
 ## OpenSpec PRD Generation
@@ -209,6 +228,8 @@ By default, successful generation automatically learns or updates a reusable PRD
 
 ```text
 <WIKI_ROOT>/20-wiki/prd-patterns/<领域>-PRD-Pattern.md
+# or, for the Chinese layout:
+<WIKI_ROOT>/20-知识库/PRD模式/<领域>-PRD-Pattern.md
 ```
 
 Use `--no-learn-pattern` to disable this behavior for a specific generation.
@@ -233,7 +254,7 @@ Draft patterns still participate in future PRD generation, but only as structure
 - `team_history`: can become `source`, `concept`, `synthesis`, or `prd_pattern`; defaults to `draft`
 - `feedback`: defaults to `draft`
 - `generated_prd_pattern`: learned reusable PRD structure; may be draft or stable based on automatic stability scoring
-- conflicts never overwrite older knowledge; they belong in `20-wiki/conflicts/`
+- conflicts never overwrite older knowledge; they belong in the configured conflict directory
 
 ## Environment
 
@@ -244,6 +265,7 @@ Copy `.env.example` and set:
 - `LLM_MODEL`
 - `WIKI_ROOT`
 - `WIKI_INDEX_DB`
+- `WIKI_LAYOUT_LANGUAGE` (`zh` or `en`)
 
 Host-model skill usage does not require model settings such as `LLM_API_KEY`; `.env` is still needed for wiki paths. Standalone CLI archive mode can use an OpenAI-compatible API configured in `.env`.
 

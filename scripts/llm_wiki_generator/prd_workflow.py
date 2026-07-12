@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
+from .layout import resolve_layout
 from .prd_pattern import learn_prd_pattern_from_payload
 from .prd_quality import PRD_DIMENSIONS, PrdQualityGate
 from .utils import ensure_parent, load_frontmatter, slugify, write_json
@@ -95,10 +96,12 @@ def save_session(settings: Settings, session: PrdSession) -> Path:
 
 
 def markdown_wiki_files(settings: Settings) -> list[Path]:
-    wiki_root = settings.wiki_root / "20-wiki"
+    layout = resolve_layout(settings.wiki_root, settings.layout_language)
+    wiki_root = settings.wiki_root / layout.wiki_root_dir
     if not wiki_root.exists():
         return []
-    return sorted(path for path in wiki_root.rglob("*.md") if path.name not in {"index.md", "log.md"})
+    excluded = {Path(layout.index_file).name, Path(layout.log_file).name}
+    return sorted(path for path in wiki_root.rglob("*.md") if path.name not in excluded)
 
 
 def read_all_wiki_knowledge(settings: Settings) -> list[WikiKnowledgeItem]:

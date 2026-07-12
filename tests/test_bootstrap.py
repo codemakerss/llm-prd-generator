@@ -6,6 +6,7 @@ from llm_wiki_generator.bootstrap import (
     inspect_bootstrap,
     normalize_wiki_root,
 )
+from llm_wiki_generator.layout import WikiLayoutError, resolve_layout
 
 
 def test_bootstrap_status_is_uninitialized_without_env(tmp_path: Path) -> None:
@@ -41,6 +42,7 @@ def test_bootstrap_init_persists_custom_absolute_path(tmp_path: Path) -> None:
     env_text = env_path.read_text(encoding="utf-8")
     assert f"WIKI_ROOT={chosen_root.resolve()}" in env_text
     assert f"WIKI_INDEX_DB={derive_index_db_path(chosen_root.resolve())}" in env_text
+    assert "WIKI_LAYOUT_LANGUAGE=en" in env_text
     assert (chosen_root / "20-wiki/index.md").exists()
     assert (chosen_root / "20-wiki/log.md").exists()
 
@@ -65,3 +67,52 @@ def test_bootstrap_status_is_initialized_after_bootstrap_init(tmp_path: Path) ->
     assert status.wiki_root == (tmp_path / "vault").resolve()
     assert status.index_db == (tmp_path / "vault" / "index.sqlite3").resolve()
     assert status.missing_paths == []
+
+
+def test_bootstrap_init_creates_chinese_layout(tmp_path: Path) -> None:
+    chosen_root = tmp_path / "知识归档"
+
+    settings, _, _ = initialize_wiki_location(tmp_path, chosen_root, "zh")
+    status = inspect_bootstrap(tmp_path)
+
+    assert settings.layout_language == "zh"
+    assert (chosen_root / "10-原始资料/业务知识").is_dir()
+    assert (chosen_root / "10-原始资料/团队历史PRD").is_dir()
+    assert (chosen_root / "20-知识库/PRD模式").is_dir()
+    assert (chosen_root / "20-知识库/索引.md").exists()
+    assert (chosen_root / "20-知识库/日志.md").exists()
+    assert not (chosen_root / "20-wiki").exists()
+    assert status.initialized
+    assert status.layout_language == "zh"
+    assert "20-知识库/索引.md" in status.layout_paths
+
+
+def test_existing_layout_is_detected_without_language_setting(tmp_path: Path) -> None:
+    wiki_root = tmp_path / "legacy"
+    (wiki_root / "20-知识库").mkdir(parents=True)
+
+    layout = resolve_layout(wiki_root, "")
+
+    assert layout.language == "zh"
+
+
+def test_conflicting_layouts_are_rejected(tmp_path: Path) -> None:
+    wiki_root = tmp_path / "conflict"
+    (wiki_root / "20-wiki").mkdir(parents=True)
+    (wiki_root / "20-知识库").mkdir(parents=True)
+
+    try:
+        resolve_layout(wiki_root)
+    except WikiLayoutError as exc:
+        assert "both 20-wiki and 20-知识库" in str(exc)
+    else:
+        raise AssertionError("Expected conflicting layouts to be rejected")
+
+
+def test_bootstrap_status_reports_invalid_language(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("WIKI_LAYOUT_LANGUAGE=fr\n", encoding="utf-8")
+
+    status = inspect_bootstrap(tmp_path)
+
+    assert not status.initialized
+    assert status.error == "WIKI_LAYOUT_LANGUAGE must be 'zh' or 'en'."

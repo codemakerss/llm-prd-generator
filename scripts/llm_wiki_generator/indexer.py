@@ -5,13 +5,16 @@ import re
 from pathlib import Path
 
 from .config import Settings
+from .layout import resolve_layout
 from .models import RetrievedDocument, Scope
 from .utils import extract_wikilinks, load_frontmatter
 
 
 def markdown_files(settings: Settings) -> list[Path]:
-    wiki_root = settings.wiki_root / "20-wiki"
-    return sorted(path for path in wiki_root.rglob("*.md") if path.name not in {"index.md", "log.md"})
+    layout = resolve_layout(settings.wiki_root, settings.layout_language)
+    wiki_root = settings.wiki_root / layout.wiki_root_dir
+    excluded = {Path(layout.index_file).name, Path(layout.log_file).name}
+    return sorted(path for path in wiki_root.rglob("*.md") if path.name not in excluded)
 
 
 def build_index(settings: Settings) -> int:

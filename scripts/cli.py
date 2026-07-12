@@ -10,7 +10,13 @@ from rich.panel import Panel
 from rich.table import Table
 
 from llm_wiki_generator.answer import answer_question
-from llm_wiki_generator.archive import ArchiveLLMRequiredError, apply_preview, archive_source, enforce_rules
+from llm_wiki_generator.archive import (
+    ArchiveLLMRequiredError,
+    apply_preview,
+    archive_receipt,
+    archive_source,
+    enforce_rules,
+)
 from llm_wiki_generator.bootstrap import initialize_wiki_location, inspect_bootstrap
 from llm_wiki_generator.config import load_settings
 from llm_wiki_generator.indexer import build_index, search_index
@@ -70,6 +76,8 @@ def bootstrap_status(as_json: bool = False) -> None:
                     f"Env file: {status.env_path}",
                     f"Wiki root: {status.wiki_root or '(unset)'}",
                     f"Index DB: {status.index_db or '(unset)'}",
+                    f"Layout language: {status.layout_language or '(unset)'}",
+                    f"Layout error: {status.error or '(none)'}",
                     f"Missing paths: {', '.join(status.missing_paths) or '(none)'}",
                 ]
             ),
@@ -79,12 +87,20 @@ def bootstrap_status(as_json: bool = False) -> None:
 
 
 @app.command("bootstrap-init")
-def bootstrap_init(wiki_root: Path) -> None:
+def bootstrap_init(
+    wiki_root: Path,
+    language: str = typer.Option("en", "--language", help="Wiki directory language: zh or en."),
+) -> None:
     skill_root = Path(__file__).resolve().parents[1]
-    settings, created, env_path = initialize_wiki_location(skill_root, wiki_root)
+    try:
+        settings, created, env_path = initialize_wiki_location(skill_root, wiki_root, language)
+    except (ValueError, RuntimeError) as exc:
+        console.print(f"[red]error[/red] {exc}")
+        raise typer.Exit(code=1) from exc
     console.print(f"[green]configured[/green] {env_path}")
     console.print(f"[green]wiki-root[/green] {settings.wiki_root}")
     console.print(f"[green]index-db[/green] {settings.index_db}")
+    console.print(f"[green]layout-language[/green] {settings.layout_language}")
     for path in created:
         console.print(f"[green]ready[/green] {path}")
 
@@ -125,6 +141,24 @@ def render_preview(preview: dict) -> None:
             update["reason"],
         )
     console.print(table)
+
+
+def render_archive_receipt(receipt: dict) -> None:
+    console.print(f"[green]source[/green] {receipt['source_file']} ({receipt['source_type']})")
+    console.print(f"[green]raw-copy[/green] {receipt['raw_path']}")
+    for update in receipt["wiki_updates"]:
+        console.print(
+            f"[green]archived[/green] {update['path']} "
+            f"[{update['page_type']}/{update['status']}] {update['summary']}"
+        )
+        console.print(f"  tags: {', '.join(update['tags']) or '(none)'}")
+        for evidence in update["evidence"]:
+            console.print(f"  evidence: {evidence['snippet']} ({evidence['reason']})")
+    console.print(f"[green]pattern[/green] {receipt['pattern']['message']}")
+    if receipt["indexed_count"] is not None:
+        console.print(
+            f"[green]indexed[/green] {receipt['indexed_count']} documents into {receipt['index_db']}"
+        )
 
 
 def load_archive_preview(source: Path, source_type: str):
@@ -177,19 +211,14 @@ def apply_preview_file(
 
     payload = {
         "preview": preview.model_dump(mode="json"),
-        "written": [str(path) for path in written],
-        "indexed_count": indexed_count,
-        "index_db": str(settings.index_db),
+        **archive_receipt(preview, source.resolve(), settings, written, indexed_count),
     }
     if as_json:
         console.print_json(json.dumps(payload, ensure_ascii=False))
         return
 
     render_preview(payload["preview"])
-    for path in written:
-        console.print(f"[green]archived[/green] {path}")
-    if indexed_count is not None:
-        console.print(f"[green]indexed[/green] {indexed_count} documents into {settings.index_db}")
+    render_archive_receipt(payload)
 
 
 @app.command("archive")
@@ -197,26 +226,27 @@ def archive(
     source: Path,
     source_type: str = typer.Option(..., "--source-type"),
     reindex: bool = typer.Option(True, "--index/--no-index", help="Rebuild the retrieval index after archiving."),
+    as_json: bool = False,
 ) -> None:
     settings, preview = load_archive_preview(source, source_type)
     written = apply_preview(preview, source.resolve(), settings)
-    payload = preview.model_dump(mode="json")
-    render_preview(payload)
-    for path in written:
-        console.print(f"[green]archived[/green] {path}")
+    indexed_count = None
     if reindex:
-        count = build_index(settings)
-        console.print(f"[green]indexed[/green] {count} documents into {settings.index_db}")
+        indexed_count = build_index(settings)
+    receipt = archive_receipt(preview, source.resolve(), settings, written, indexed_count)
+    if as_json:
+        console.print_json(json.dumps({"preview": preview.model_dump(mode="json"), **receipt}, ensure_ascii=False))
+        return
+    render_preview(preview.model_dump(mode="json"))
+    render_archive_receipt(receipt)
 
 
 @app.command()
 def apply(source: Path, source_type: str = typer.Option(..., "--source-type")) -> None:
     settings, preview = load_archive_preview(source, source_type)
     written = apply_preview(preview, source.resolve(), settings)
-    payload = preview.model_dump(mode="json")
-    render_preview(payload)
-    for path in written:
-        console.print(f"[green]archived[/green] {path}")
+    render_preview(preview.model_dump(mode="json"))
+    render_archive_receipt(archive_receipt(preview, source.resolve(), settings, written, None))
 
 
 @app.command()

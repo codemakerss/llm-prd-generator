@@ -21,6 +21,7 @@ class Settings:
     llm_model: str
     llm_timeout: int
     default_scope: str
+    layout_language: str = "en"
 
 
 def env_file_path(skill_root: Path) -> Path:
@@ -94,4 +95,5 @@ def load_settings() -> Settings:
         llm_model=os.getenv("LLM_MODEL", "").strip(),
         llm_timeout=int(os.getenv("LLM_TIMEOUT", "60")),
         default_scope=os.getenv("WIKI_SCOPE", "stable").strip() or "stable",
+        layout_language=os.getenv("WIKI_LAYOUT_LANGUAGE", "").strip().lower(),
     )

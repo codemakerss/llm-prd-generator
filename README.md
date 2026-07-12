@@ -22,6 +22,15 @@ This project takes a stricter path:
 
 ## Core Workflows
 
+On first use, check initialization, ask whether to initialize, ask for Chinese or English folder names, ask for the Wiki Root path, show the resulting layout, and confirm before writing:
+
+```bash
+python scripts/cli.py bootstrap-init path/to/wiki-vault --language zh
+python scripts/cli.py bootstrap-init path/to/wiki-vault --language en
+```
+
+After initialization, ask for files to import and classify each batch as business knowledge, team-history PRD, industry PRD, or feedback before archiving. Both `archive` and `apply-preview` return an archive receipt; add `--as-json` for paths, parsed updates, evidence, Pattern results, and index details in machine-readable form.
+
 ### Knowledge Archiving
 
 Use this when adding source material to the vault.
@@ -84,7 +93,7 @@ python scripts/cli.py prd-chat "商家刷单识别系统" --answer "目标用户
 Each turn:
 
 - loads the saved session
-- reads every Markdown file under `20-wiki/`
+- reads every Markdown file under the configured English `20-wiki/` or Chinese `20-知识库/` directory
 - ranks knowledge by tags, title, body, page type, source type, and status
 - builds `Evidence Pack`, `Template Guidance`, and `Team Style Pack`
 - uses stable PRD patterns as strong structure guidance and draft PRD patterns as weaker question/coverage hints
@@ -130,6 +139,7 @@ By default, successful generation also learns a reusable PRD Pattern from the fi
 
 ```text
 <WIKI_ROOT>/20-wiki/prd-patterns/<领域>-PRD-Pattern.md
+<WIKI_ROOT>/20-知识库/PRD模式/<领域>-PRD-Pattern.md  # Chinese layout
 ```
 
 Disable automatic learning when needed:
@@ -195,6 +205,30 @@ Generation is blocked until the score is `100%`.
 index.sqlite3
 ```
 
+Chinese layout (`--language zh`):
+
+```text
+10-原始资料/
+  业务知识/
+  业界实践/
+  团队历史PRD/
+  用户反馈/
+
+20-知识库/
+  来源/
+  实体/
+  概念/
+  综合/
+  冲突/
+  PRD模式/
+  索引.md
+  日志.md
+
+index.sqlite3
+```
+
+OpenSpec keeps its required English `openspec/changes/specs` names in both layouts. Existing Wiki layouts are detected when `WIKI_LAYOUT_LANGUAGE` is absent; mixed `20-wiki` and `20-知识库` roots are rejected and never migrated automatically.
+
 `index.sqlite3` lives inside `WIKI_ROOT` by default, so the raw sources, wiki pages, OpenSpec PRDs, learned PRD patterns, and retrieval index move together as one knowledge workspace.
 
 ## Source Boundaries
@@ -224,7 +258,7 @@ Initialize or inspect the vault:
 
 ```bash
 python scripts/cli.py bootstrap-status --as-json
-python scripts/cli.py bootstrap-init path/to/wiki-vault
+python scripts/cli.py bootstrap-init path/to/wiki-vault --language zh  # or en
 ```
 
 ## Skill Install Name

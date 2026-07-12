@@ -10,7 +10,8 @@ from .llm import OpenAICompatibleLLM
 from .markdown import MarkdownDocument, convert_to_markdown
 from .models import ArchivePreview, EvidenceItem, PageType, SourceType, Status, UpdateItem
 from .utils import dump_frontmatter, ensure_parent, extract_wikilinks, load_frontmatter, slugify, utc_now
-from .vault import RAW_DIRS, WIKI_DIRS, init_vault
+from .layout import resolve_layout
+from .vault import init_vault
 
 
 class ArchiveLLMRequiredError(RuntimeError):
@@ -26,6 +27,10 @@ Respect source boundaries:
 - business_fact may become factual business knowledge when evidence is strong
 - industry_practice may become source, synthesis, or prd_pattern but not business fact
 - team_history may become source, concept, synthesis, or prd_pattern and always stays draft
+- for industry_practice and team_history, extract a prd_pattern whenever the source contains reusable PRD
+  questions, section structure, acceptance approaches, review rules, or risk checks
+- prd_pattern must exclude project names, concrete metrics/thresholds, interface names, dates, and source-specific facts
+- if no reusable PRD method exists, do not emit an empty prd_pattern
 - team_history PRD patterns may come from historical PRDs, team decisions, requirement structures, review flows, reusable templates, and repeated product judgments
 - feedback defaults to draft
 - contradictions must become conflict
@@ -166,6 +171,8 @@ Converted Markdown:
 def enforce_rules(preview: ArchivePreview) -> ArchivePreview:
     fixed: list[UpdateItem] = []
     for update in preview.updates:
+        if preview.source_type == SourceType.BUSINESS_FACT and update.page_type == PageType.PRD_PATTERN:
+            continue
         status = update.status
         if update.page_type == PageType.CONFLICT:
             status = Status.CONFLICT
@@ -176,12 +183,61 @@ def enforce_rules(preview: ArchivePreview) -> ArchivePreview:
             status = Status.STABLE
         update.status = status
         fixed.append(update)
+    if preview.source_type in {SourceType.TEAM_HISTORY, SourceType.INDUSTRY_PRACTICE}:
+        fixed = ensure_reusable_prd_pattern(preview, fixed)
     preview.updates = fixed
     return preview
 
 
+def ensure_reusable_prd_pattern(preview: ArchivePreview, updates: list[UpdateItem]) -> list[UpdateItem]:
+    if any(update.page_type == PageType.PRD_PATTERN for update in updates):
+        return updates
+
+    source_text = "\n".join(f"{item.title}\n{item.summary}\n{item.body}" for item in updates)
+    markers = [
+        "prd", "需求", "背景", "目标", "用户", "范围", "流程", "指标", "验收", "风险", "上线", "评审"
+    ]
+    matched = [marker for marker in markers if marker.lower() in source_text.lower()]
+    if len(matched) < 3:
+        return updates
+
+    reusable_lines = [
+        line.strip(" #-*")
+        for line in source_text.splitlines()
+        if line.strip() and any(marker.lower() in line.lower() for marker in matched)
+    ][:10]
+    if len(reusable_lines) < 2:
+        return updates
+
+    has_conflict = any(update.page_type == PageType.CONFLICT for update in updates)
+    status = (
+        Status.DRAFT
+        if preview.source_type == SourceType.TEAM_HISTORY or has_conflict
+        else Status.STABLE
+    )
+    updates.append(
+        UpdateItem(
+            page_type=PageType.PRD_PATTERN,
+            title=f"{preview.title} - PRD Pattern",
+            status=status,
+            summary=f"Reusable PRD structure extracted from {preview.title}.",
+            body="## Reusable Structure\n\n" + "\n".join(f"- {line}" for line in reusable_lines),
+            tags=sorted({preview.source_type.value, "prd", "pattern", *matched}),
+            links=[],
+            confidence="medium",
+            evidence=[
+                EvidenceItem(snippet=line, reason="Supports a reusable PRD method")
+                for line in reusable_lines[:5]
+            ],
+            reason="The source contains reusable PRD sections, questions, acceptance methods, or risk checks.",
+        )
+    )
+    return updates
+
+
 def page_path(settings: Settings, update: UpdateItem) -> Path:
-    relative = WIKI_DIRS[update.page_type.value]
+    layout = resolve_layout(settings.wiki_root, settings.layout_language)
+    relative = layout.wiki_dirs[update.page_type.value]
     filename = f"{slugify(update.title)}.md"
     return settings.wiki_root / relative / filename
 
@@ -237,8 +293,9 @@ def merge_or_write(path: Path, preview: ArchivePreview, update: UpdateItem) -> N
 
 
 def update_index_and_log(settings: Settings, preview: ArchivePreview, written_paths: list[Path]) -> None:
-    index_path = settings.wiki_root / "20-wiki/index.md"
-    log_path = settings.wiki_root / "20-wiki/log.md"
+    layout = resolve_layout(settings.wiki_root, settings.layout_language)
+    index_path = settings.wiki_root / layout.index_file
+    log_path = settings.wiki_root / layout.log_file
 
     relative_links = [
         f"- [[{path.stem}]] -> `{path.relative_to(settings.wiki_root)}`"
@@ -262,7 +319,8 @@ def archive_source(source_path: Path, source_type: SourceType, settings: Setting
 
 def apply_preview(preview: ArchivePreview, source_path: Path, settings: Settings) -> list[Path]:
     init_vault(settings)
-    raw_target = settings.wiki_root / RAW_DIRS[preview.source_type.value] / source_path.name
+    layout = resolve_layout(settings.wiki_root, settings.layout_language)
+    raw_target = settings.wiki_root / layout.raw_dirs[preview.source_type.value] / source_path.name
     ensure_parent(raw_target)
     shutil.copy2(source_path, raw_target)
 
@@ -274,3 +332,46 @@ def apply_preview(preview: ArchivePreview, source_path: Path, settings: Settings
 
     update_index_and_log(settings, preview, written_paths)
     return written_paths
+
+
+def archive_receipt(
+    preview: ArchivePreview,
+    source_path: Path,
+    settings: Settings,
+    written_paths: list[Path],
+    indexed_count: int | None,
+) -> dict:
+    layout = resolve_layout(settings.wiki_root, settings.layout_language)
+    raw_target = settings.wiki_root / layout.raw_dirs[preview.source_type.value] / source_path.name
+    updates = []
+    for update, path in zip(preview.updates, written_paths):
+        updates.append(
+            {
+                "title": update.title,
+                "page_type": update.page_type.value,
+                "status": update.status.value,
+                "tags": update.tags,
+                "summary": update.summary,
+                "evidence": [item.model_dump() for item in update.evidence],
+                "path": str(path),
+            }
+        )
+    patterns = [item for item in updates if item["page_type"] == "prd_pattern"]
+    return {
+        "source_file": str(source_path),
+        "source_type": preview.source_type.value,
+        "summary": preview.summary,
+        "raw_path": str(raw_target),
+        "written": [str(path) for path in written_paths],
+        "wiki_updates": updates,
+        "pattern": {
+            "learned": bool(patterns),
+            "items": patterns,
+            "message": "PRD pattern archived." if patterns else "No reusable PRD pattern was identified.",
+        },
+        "layout_language": layout.language,
+        "indexed_count": indexed_count,
+        "index_db": str(settings.index_db),
+        "skipped": [],
+        "failed": [],
+    }

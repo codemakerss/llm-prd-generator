@@ -7,6 +7,7 @@ from typing import Any
 
 from .config import Settings
 from .indexer import build_index
+from .layout import resolve_layout
 from .utils import dump_frontmatter, ensure_parent, load_frontmatter, slugify, utc_now
 
 
@@ -153,7 +154,8 @@ def supporting_sources_from_context(context: dict[str, Any]) -> list[str]:
 
 
 def existing_pattern_sources(settings: Settings, domain: str) -> tuple[list[str], int]:
-    pattern_root = settings.wiki_root / "20-wiki" / "prd-patterns"
+    layout = resolve_layout(settings.wiki_root, settings.layout_language)
+    pattern_root = settings.wiki_root / layout.pattern_dir
     if not pattern_root.exists():
         return [], 0
     sources: list[str] = []
@@ -291,7 +293,8 @@ def render_pattern_page(candidate: PatternCandidate, learned_from_change: str) -
 
 
 def merge_or_write_pattern(settings: Settings, candidate: PatternCandidate, learned_from_change: str) -> Path:
-    path = settings.wiki_root / "20-wiki" / "prd-patterns" / f"{slugify(candidate.title)}.md"
+    layout = resolve_layout(settings.wiki_root, settings.layout_language)
+    path = settings.wiki_root / layout.pattern_dir / f"{slugify(candidate.title)}.md"
     ensure_parent(path)
     if not path.exists():
         path.write_text(render_pattern_page(candidate, learned_from_change), encoding="utf-8")
